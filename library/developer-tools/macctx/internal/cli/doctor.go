@@ -16,7 +16,8 @@ func newDoctorCmd() *cobra.Command {
 		Use:   "doctor",
 		Short: "Check CLI health",
 		RunE: func(cmd *cobra.Command, args []string) error {
-			peekabooOK := mustHavePeekaboo() == nil
+			peekabooErr := mustHavePeekaboo()
+			peekabooOK := peekabooErr == nil
 			var permissions string
 			if peekabooOK {
 				res, err := runPeekaboo(peekabooArgs("permissions", "status", "--json")...)
@@ -49,7 +50,7 @@ func newDoctorCmd() *cobra.Command {
 			fmt.Println("  permissions:")
 			fmt.Println(permissions)
 			if !peekabooOK {
-				return mustHavePeekaboo()
+				return peekabooErr
 			}
 			return nil
 		},

@@ -60,7 +60,7 @@ func newDumpCmd() *cobra.Command {
 				}
 			}
 			if includeClipboard {
-				clipRes, err := runPeekaboo(peekabooArgs("clipboard", "--action", "get")...)
+				clipRes, err := runPeekaboo(peekabooArgs("clipboard", "--action", "get", "--json")...)
 				bundle["clipboard_error"] = errorString(err)
 				if err == nil {
 					preview, truncated := clipboardPreview(clipboardTextFromOutput(clipRes.Stdout), 500)

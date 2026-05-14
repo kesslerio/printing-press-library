@@ -5,7 +5,6 @@ package cli
 
 import (
 	"fmt"
-	"strings"
 
 	"github.com/spf13/cobra"
 )
@@ -50,6 +49,3 @@ func newVersionCliCmd() *cobra.Command {
 		},
 	}
 }
-
-// suggestFlag is a placeholder for flag suggestion support.
-var _ = strings.Contains

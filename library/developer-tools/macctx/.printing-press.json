@@ -7,7 +7,6 @@
   "cli_name": "macctx-pp-cli",
   "owner": "hiten-shah",
   "printer_name": "Hiten Shah",
-  "spec_path": "/Users/bobshah/printing-press/.runstate/cli-printing-press-b8872e85/runs/20260513-164245/pipeline/macctx-plan.md",
   "spec_format": "plan",
   "mcp_ready": "none",
   "api_version": "0.2.0",
@@ -51,5 +50,6 @@
       "why_it_matters": "Keeps agent context useful without silently exfiltrating secrets.",
       "group": "Safety"
     }
-  ]
+  ],
+  "printer": "hiten-shah"
 }
