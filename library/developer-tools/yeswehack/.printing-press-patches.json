@@ -5,6 +5,17 @@
   "base_printing_press_version": "4.2.2",
   "patches": [
     {
+      "id": "fts5-search-by-type-dedupe",
+      "summary": "Use FTS5-narrowed candidates per source in reportDedupeCollisions instead of scanning 10k rows per source and discarding the BM25 results.",
+      "reason": "The previous code called db.Search(query, limit*5) and threw the result away (`_, _ = ...`), then loaded 10000 rows from each source via listResourceObjects and Jaccard-scored every one. The CLI help text and PR description promised 'FTS5 search ... FTS5 BM25' scoring, but FTS5 was never consulted for the final ranking. Added SearchByType(query, resourceType, limit) to Store as a thin BM25-ranked + type-filtered query. reportDedupeCollisions now calls SearchByType per source with limit*5 candidates, parses them into objects, and re-scores with Jaccard + asset/CWE overlap for the secondary ordering. Falls back to listResourceObjects only if FTS5 returns no candidates (e.g., a brand-new sync before resources_fts is populated). Empty queries short-circuit to nil so Jaccard-against-empty is not wasted I/O.",
+      "files": [
+        "internal/store/store.go",
+        "internal/store/search_by_type_test.go",
+        "internal/cli/transcend_helpers.go"
+      ],
+      "validated_outcome": "Three new TestSearchByType_* tests pass (type-isolation, empty-query short-circuit, unknown-type empty result). Full suite 92 tests / 11 packages green; build, vet, govulncheck, verify-skill all clean."
+    },
+    {
       "id": "dedupe-exit-code-braces",
       "summary": "Fix mismatched braces in report dedupe so the package compiles, and only return exit code 2 when the top row's score actually clears the 0.8 duplicate threshold.",
       "reason": "The first attempt to add the score-gated exit code left an orphan return statement and an extra closing brace between the inner if-block and the function's final return nil, producing five Go syntax errors on the build. The orphan return also made the score-threshold check redundant by exiting 2 for any non-empty result set.",

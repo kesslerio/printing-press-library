@@ -405,17 +405,40 @@ func printNovelOutput(w io.Writer, v any, flags *rootFlags) error {
 
 func reportDedupeCollisions(db *store.Store, title, asset, cwe string, limit int) ([]map[string]any, error) {
 	query := strings.TrimSpace(strings.Join([]string{title, asset, cwe}, " "))
-	if query != "" {
-		_, _ = db.Search(query, limit*5)
+	// Empty query has no FTS5 candidates and Jaccard-scoring 20k items
+	// against an empty title is wasted I/O — return nothing.
+	if query == "" {
+		return nil, nil
 	}
 	var hits []map[string]any
 	for _, source := range []struct {
 		rtype string
 		name  string
 	}{{"hacktivity", "hacktivity"}, {"user-reports", "self"}} {
-		items, err := listResourceObjects(db, source.rtype, 10000)
+		// PATCH: FTS5-narrowed candidates instead of a 10k full-table
+		// scan per source. The BM25-ordered results are then re-scored
+		// with Jaccard + asset/CWE overlap for the final ranking. Falls
+		// back to listResourceObjects only if FTS5 returns no candidates
+		// (e.g., a brand-new sync with no rows in resources_fts yet).
+		var items []map[string]any
+		rawHits, err := db.SearchByType(query, source.rtype, limit*5)
 		if err != nil {
 			return nil, err
+		}
+		if len(rawHits) == 0 {
+			items, err = listResourceObjects(db, source.rtype, 10000)
+			if err != nil {
+				return nil, err
+			}
+		} else {
+			items = make([]map[string]any, 0, len(rawHits))
+			for _, raw := range rawHits {
+				var obj map[string]any
+				if jerr := json.Unmarshal(raw, &obj); jerr != nil {
+					continue
+				}
+				items = append(items, obj)
+			}
 		}
 		for _, obj := range items {
 			title2 := stringField(obj, "title", "report_title", "name", "summary")
