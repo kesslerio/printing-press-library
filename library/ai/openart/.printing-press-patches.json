@@ -73,6 +73,15 @@
         "internal/cli/prompts_novel.go"
       ],
       "validated_outcome": "go build + go vet + go test ./... pass (193/12). --bump count routes to imageCount on image models / videoCount on video; --bump duration errors on image models with a helpful message instead of silently dropping."
+    },
+    {
+      "id": "compare-family-aware-preflight-and-body",
+      "summary": "compare now branches preflight + submit body on Model.Family so image-family models stop failing with 'outside range (0-0)' and stop receiving video-shaped POST bodies.",
+      "reason": "The compare preflight loop applied video-only duration / Resolutions checks to every model, so image-family models (DurationMin/Max=0, nil Resolutions, populated PixelResolutions) always failed with the misleading 'outside range (0-0)' error before the submit ever fired. Even when preflight was bypassed, the submit body was hardcoded video-shaped (videoCount/duration/720p, FormText2Video). Same Greptile P1 follow-up that prompts replay just got, applied here too (PR #554).",
+      "files": [
+        "internal/cli/compare.go"
+      ],
+      "validated_outcome": "go build + go vet + go test ./... pass (193/12). Image-family models in --models now skip the duration check, validate resolution against PixelResolutions, and submit against Capability(FormText2Image) with an image-shaped body."
     }
   ]
 }

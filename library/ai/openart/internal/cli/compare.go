@@ -58,22 +58,37 @@ real /suite/api/resources/<id> polling for each submission.`,
 				return fmt.Errorf("--models must list at least 2 models (got %d)", len(modelsList))
 			}
 
-			// Per-model preflight: validate duration + resolution.
+			// Per-model preflight: image-family models have
+			// DurationMin/Max=0 and use PixelResolutions; video models use
+			// Resolutions. Treat each family on its own terms so image
+			// models don't get rejected with "outside range (0-0)" or
+			// "resolution not supported" against a nil slice.
 			plans := make([]submitPlan, 0, len(modelsList))
 			totalEstimate := 0
 			for _, m := range modelsList {
+				isImage := m.Family == openartmodels.FamilyImage
 				d := duration
-				if d <= 0 {
-					d = (m.DurationMinSec + m.DurationMaxSec) / 2
-					if d == 0 {
-						d = 5
+				if !isImage {
+					if d <= 0 {
+						d = (m.DurationMinSec + m.DurationMaxSec) / 2
+						if d == 0 {
+							d = 5
+						}
 					}
+					if d < m.DurationMinSec || d > m.DurationMaxSec {
+						return fmt.Errorf("--duration %ds outside %s range (%d-%d)", d, m.DisplayName, m.DurationMinSec, m.DurationMaxSec)
+					}
+				} else {
+					d = 0
 				}
-				if d < m.DurationMinSec || d > m.DurationMaxSec {
-					return fmt.Errorf("--duration %ds outside %s range (%d-%d)", d, m.DisplayName, m.DurationMinSec, m.DurationMaxSec)
-				}
-				if !modelSupports(m.Resolutions, resolution) {
-					return fmt.Errorf("resolution %q not supported by %s; supported: %s", resolution, m.DisplayName, strings.Join(m.Resolutions, ", "))
+				if resolution != "" {
+					supported := m.Resolutions
+					if isImage {
+						supported = m.PixelResolutions
+					}
+					if len(supported) > 0 && !modelSupports(supported, resolution) {
+						return fmt.Errorf("resolution %q not supported by %s; supported: %s", resolution, m.DisplayName, strings.Join(supported, ", "))
+					}
 				}
 				est := m.EstimateCredits(d, 1, resolution)
 				totalEstimate += est
@@ -120,19 +135,50 @@ real /suite/api/resources/<id> polling for each submission.`,
 				go func(i int) {
 					defer wg.Done()
 					p := plans[i]
-					body := map[string]any{
-						"prompt":            prompt,
-						"model":             p.Model.Slug,
-						"projectId":         projectID,
-						"folderId":          nil,
-						"videoCount":        1,
-						"duration":          p.Duration,
-						"aspectRatio":       aspectRatio,
-						"resolution":        resolution,
-						"autoEnhancePrompt": false,
-						"enableUnlimited":   true,
+					isImage := p.Model.Family == openartmodels.FamilyImage
+					formType := openartmodels.FormText2Video
+					var body map[string]any
+					if isImage {
+						formType = openartmodels.FormText2Image
+						imgAspect := aspectRatio
+						if imgAspect == "" {
+							imgAspect = "1:1"
+						}
+						body = map[string]any{
+							"prompt":           prompt,
+							"model":            p.Model.Slug,
+							"projectId":        projectID,
+							"folderId":         nil,
+							"imageCount":       1,
+							"aspectRatio":      imgAspect,
+							"visualReferences": []string{},
+						}
+						if resolution != "" {
+							body["resolution"] = resolution
+						}
+					} else {
+						vidAspect := aspectRatio
+						if vidAspect == "" {
+							vidAspect = "16:9"
+						}
+						vidRes := resolution
+						if vidRes == "" {
+							vidRes = "720p"
+						}
+						body = map[string]any{
+							"prompt":            prompt,
+							"model":             p.Model.Slug,
+							"projectId":         projectID,
+							"folderId":          nil,
+							"videoCount":        1,
+							"duration":          p.Duration,
+							"aspectRatio":       vidAspect,
+							"resolution":        vidRes,
+							"autoEnhancePrompt": false,
+							"enableUnlimited":   true,
+						}
 					}
-					capability := p.Model.Capability(openartmodels.FormText2Video)
+					capability := p.Model.Capability(formType)
 					path := "/forms/creations/" + url.PathEscape(capability)
 					raw, status, err := c.Post(path, body)
 					if err != nil {
