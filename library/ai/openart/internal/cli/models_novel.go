@@ -99,11 +99,24 @@ covers your needs before committing credits to a Seedance/Veo run.`,
 				if string(m.Family) != family {
 					continue
 				}
-				if duration > 0 && (duration < m.DurationMinSec || duration > m.DurationMaxSec) {
-					continue
+				// Skip the duration check for image-family models
+				// (DurationMin/Max=0); their generations are not
+				// duration-scaled. Pick the right resolution slice per
+				// family: image models populate PixelResolutions, video
+				// models populate Resolutions.
+				if duration > 0 && m.Family != openartmodels.FamilyImage {
+					if duration < m.DurationMinSec || duration > m.DurationMaxSec {
+						continue
+					}
 				}
-				if resolution != "" && !modelSupports(m.Resolutions, resolution) {
-					continue
+				if resolution != "" {
+					supported := m.Resolutions
+					if m.Family == openartmodels.FamilyImage {
+						supported = m.PixelResolutions
+					}
+					if len(supported) > 0 && !modelSupports(supported, resolution) {
+						continue
+					}
 				}
 				if needsAudio && !m.HasAudio {
 					continue

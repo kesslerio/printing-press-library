@@ -82,6 +82,24 @@
         "internal/cli/compare.go"
       ],
       "validated_outcome": "go build + go vet + go test ./... pass (193/12). Image-family models in --models now skip the duration check, validate resolution against PixelResolutions, and submit against Capability(FormText2Image) with an image-shaped body."
+    },
+    {
+      "id": "models-cheapest-family-aware",
+      "summary": "models cheapest now picks PixelResolutions for image-family models and skips the duration check on them.",
+      "reason": "The flag default `--resolution 720p` flowed into a `modelSupports(m.Resolutions, ...)` check that always fails for image models (Resolutions == nil; PixelResolutions populated). Result: `models cheapest --family image` returned zero rows on every invocation, even without a user-supplied --resolution. Same family-blind pattern just fixed in compare and prompts replay, applied here too (greptile P1 follow-up on PR #554).",
+      "files": [
+        "internal/cli/models_novel.go"
+      ],
+      "validated_outcome": "go build + go vet + go test ./... pass (193/12). models cheapest --family image now ranks image models against PixelResolutions with the default 720p; duration filter skipped on image models since their generations are not duration-scaled."
+    },
+    {
+      "id": "cost-estimate-family-aware",
+      "summary": "cost estimate now picks the right Capability form + body shape for image-family models and skips the duration default on them.",
+      "reason": "Preemptive fix for the same family-blind pattern in `cost estimate`. The local estimate fell back to duration=5 on image models (DurationMin/Max=0) and the --live topaz POST always sent video-shaped {duration, videoCount, 720p, FormText2Video}, so the live quote 4xx'd silently and the result fell back to the (incorrect) local estimate. Image branch now uses 0 duration, builds {imageCount, aspectRatio 1:1, resolution?} and posts against Capability(FormText2Image).",
+      "files": [
+        "internal/cli/cost.go"
+      ],
+      "validated_outcome": "go build + go vet + go test ./... pass (193/12). Local estimate for image models no longer multiplies by a fake 5s duration; --live topaz call uses the family-appropriate capability + body."
     }
   ]
 }

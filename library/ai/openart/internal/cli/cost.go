@@ -55,10 +55,15 @@ This is a read-only operation; no credits are spent.`,
 			if model == nil {
 				return fmt.Errorf("unknown model %q. Run 'openart-pp-cli models list' to see options.", modelInput)
 			}
+			isImage := model.Family == openartmodels.FamilyImage
 			if duration <= 0 {
-				duration = (model.DurationMinSec + model.DurationMaxSec) / 2
-				if duration == 0 {
-					duration = 5
+				if isImage {
+					duration = 0
+				} else {
+					duration = (model.DurationMinSec + model.DurationMaxSec) / 2
+					if duration == 0 {
+						duration = 5
+					}
 				}
 			}
 			if count <= 0 {
@@ -113,16 +118,31 @@ This is a read-only operation; no credits are spent.`,
 				result["balance_error"] = err.Error()
 			}
 
-			// Try /topaz/estimate (best-effort).
-			topazBody := map[string]any{
-				"capabilityId": model.Capability(openartmodels.FormText2Video),
-				"input": map[string]any{
+			// Try /topaz/estimate (best-effort). Build a family-shaped body
+			// so the live quote actually reaches the right endpoint for
+			// image-family models.
+			formType := openartmodels.FormText2Video
+			topazInput := map[string]any{
+				"prompt":      "estimate-only",
+				"duration":    duration,
+				"videoCount":  count,
+				"resolution":  resolution,
+				"aspectRatio": "16:9",
+			}
+			if isImage {
+				formType = openartmodels.FormText2Image
+				topazInput = map[string]any{
 					"prompt":      "estimate-only",
-					"duration":    duration,
-					"videoCount":  count,
-					"resolution":  resolution,
-					"aspectRatio": "16:9",
-				},
+					"imageCount":  count,
+					"aspectRatio": "1:1",
+				}
+				if resolution != "" {
+					topazInput["resolution"] = resolution
+				}
+			}
+			topazBody := map[string]any{
+				"capabilityId": model.Capability(formType),
+				"input":        topazInput,
 			}
 			if raw, status, err := c.Post("/topaz/estimate", topazBody); err == nil && status < 400 {
 				var t struct {
