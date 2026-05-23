@@ -18,8 +18,49 @@ import (
 	"sync"
 	"time"
 
-	_ "modernc.org/sqlite"
+	sqlite "modernc.org/sqlite"
 )
+
+// PATCH(wal-pragmas-via-hook): the DSN-level pragma syntax
+// (_journal_mode=WAL, _busy_timeout=5000, etc.) is silently ignored by
+// modernc.org/sqlite v1.37.0 — a live store opened with the DSN-style
+// params still reports `PRAGMA journal_mode=delete, busy_timeout=0`.
+// Register a connection hook so the pragmas are applied via PRAGMA
+// statements after the connection is established, which is the only
+// reliable path. See docs/plans/2026-05-23-001-feat-prediction-goat-search-relevance-and-freshness-plan.md U1.
+func init() {
+	sqlite.RegisterConnectionHook(func(conn sqlite.ExecQuerierContext, dsn string) error {
+		ctx := context.Background()
+		// busy_timeout FIRST so subsequent pragmas can wait through any
+		// contention with other connections on the same file.
+		if _, err := conn.ExecContext(ctx, "PRAGMA busy_timeout = 5000", nil); err != nil {
+			return fmt.Errorf("apply busy_timeout: %w", err)
+		}
+		// journal_mode is database-level (lives in the file header). On a
+		// fresh DB with concurrent openers, two goroutines may both try to
+		// flip delete→WAL; one wins, the other gets SQLITE_BUSY. Tolerate
+		// that: the file is already in WAL by the time the loser observes
+		// it, and a subsequent PRAGMA journal_mode read will return "wal".
+		if _, err := conn.ExecContext(ctx, "PRAGMA journal_mode = WAL", nil); err != nil {
+			if !strings.Contains(err.Error(), "database is locked") &&
+				!strings.Contains(err.Error(), "SQLITE_BUSY") {
+				return fmt.Errorf("apply journal_mode=WAL: %w", err)
+			}
+		}
+		// Connection-level pragmas — must fire on every new pool connection.
+		for _, p := range []string{
+			"PRAGMA foreign_keys = ON",
+			"PRAGMA temp_store = MEMORY",
+			"PRAGMA mmap_size = 268435456",
+			"PRAGMA synchronous = NORMAL",
+		} {
+			if _, err := conn.ExecContext(ctx, p, nil); err != nil {
+				return fmt.Errorf("apply %q: %w", p, err)
+			}
+		}
+		return nil
+	})
+}
 
 var uuidPattern = regexp.MustCompile(`^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$`)
 

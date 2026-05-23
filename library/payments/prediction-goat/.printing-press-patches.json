@@ -3,5 +3,14 @@
   "applied_at": "2026-05-23",
   "base_run_id": "20260522-175728",
   "base_printing_press_version": "4.10.0",
-  "patches": []
+  "patches": [
+    {
+      "id": "wal-pragmas-via-connection-hook",
+      "summary": "Apply journal_mode=WAL and busy_timeout=5000 via sqlite.RegisterConnectionHook because DSN-level _journal_mode/_busy_timeout params are silently ignored by modernc.org/sqlite v1.37.0.",
+      "reason": "Live store opened with the DSN-style pragma params still reported PRAGMA journal_mode=delete and busy_timeout=0, which is the root cause of the SQLITE_BUSY failures observed during concurrent topic queries and during kalshi sync. Connection hook is the only reliable path.",
+      "files": ["internal/store/store.go", "internal/store/store_concurrency_test.go"],
+      "validated_outcome": "go test ./internal/store/... passes (76 tests including 4 new concurrency tests). Live db now reports journal_mode=wal, busy_timeout=5000.",
+      "upstream_issue": "Generator template should switch from DSN-pragma to connection-hook approach for all printed CLIs that use modernc.org/sqlite."
+    }
+  ]
 }
