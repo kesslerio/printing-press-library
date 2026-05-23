@@ -11,6 +11,14 @@
       "files": ["internal/store/store.go", "internal/store/store_concurrency_test.go"],
       "validated_outcome": "go test ./internal/store/... passes (76 tests including 4 new concurrency tests). Live db now reports journal_mode=wal, busy_timeout=5000.",
       "upstream_issue": "Generator template should switch from DSN-pragma to connection-hook approach for all printed CLIs that use modernc.org/sqlite."
+    },
+    {
+      "id": "curated-fts-content",
+      "summary": "Project resources_fts.content to a topic-bearing key subset (title, ticker, category, etc.) instead of the raw JSON blob. Schema version bumped 2→3 with a one-shot rebuild migration.",
+      "reason": "Indexing the entire raw JSON included Kalshi source_agencies URL refs and Polymarket descriptions, producing false positives like KXFUSION (Nuclear fusion series) matching 'oscars best picture 2026' because its source list cited oscars.org. The new ftsContent extractor projects only semantic fields, eliminating the false-positive vector while preserving real-signal matches.",
+      "files": ["internal/store/store.go", "internal/store/fts_content_test.go"],
+      "validated_outcome": "go test ./internal/store/... passes (91 tests). The new TestFTSContent_PreventsFTSFalsePositives end-to-end test exercises the FTS engine with seeded KXFUSION/KXOSCARCOUNTCONCLAVE/KXBTCMAX100/KXMENWORLDCUP-26-PT fixtures and confirms KXFUSION is excluded from 'oscar' query results.",
+      "upstream_issue": "Generator templates for printed CLIs that ship resources_fts should use a curated extractor by default instead of indexing raw JSON; the resource-type-aware key set generalizes to non-prediction-market CLIs as well."
     }
   ]
 }

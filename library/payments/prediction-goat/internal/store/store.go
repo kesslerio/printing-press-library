@@ -82,7 +82,7 @@ func IsUUID(s string) bool {
 // shape — adding columns, dropping indexes, changing FTS5 tokenizers —
 // so an older binary refuses to open a newer database rather than silently
 // producing wrong results against a schema it cannot read.
-const StoreSchemaVersion = 2
+const StoreSchemaVersion = 3
 
 const resourcesFTSCreateSQL = `CREATE VIRTUAL TABLE IF NOT EXISTS resources_fts USING fts5(
 	id, resource_type, content, tokenize='porter unicode61'
@@ -1162,6 +1162,12 @@ func (s *Store) migrate(ctx context.Context) error {
 			}
 		}
 
+		if current < 3 {
+			if err := s.migrateResourcesFTSCuratedContent(ctx, conn); err != nil {
+				return fmt.Errorf("migrating resources_fts curated content: %w", err)
+			}
+		}
+
 		if err := s.backfillColumns(ctx, conn); err != nil {
 			return fmt.Errorf("backfilling columns: %w", err)
 		}
@@ -1234,6 +1240,35 @@ func (s *Store) migrateResourcesCompositeKey(ctx context.Context, conn *sql.Conn
 	return nil
 }
 
+// migrateResourcesFTSCuratedContent drops resources_fts and rebuilds it
+// against the new curated-content projection from ftsContent. v1 and v2
+// indexed the entire raw JSON blob, which produced false positives like
+// KXFUSION (Nuclear fusion) matching "oscars best picture" because its
+// source_agencies field cited oscars.org. The schema-version gate
+// ensures this runs exactly once per existing DB.
+func (s *Store) migrateResourcesFTSCuratedContent(ctx context.Context, conn *sql.Conn) error {
+	exists, err := tableExists(ctx, conn, "resources")
+	if err != nil {
+		return err
+	}
+	if !exists {
+		// Fresh DB — the CREATE TABLE migrations will create both tables
+		// and rebuildResourcesFTS gets called on first upsert via the
+		// normal insert path. Nothing to do here.
+		return nil
+	}
+	if _, err := conn.ExecContext(ctx, `DROP TABLE IF EXISTS resources_fts`); err != nil {
+		return fmt.Errorf("dropping resources_fts: %w", err)
+	}
+	if _, err := conn.ExecContext(ctx, resourcesFTSCreateSQL); err != nil {
+		return fmt.Errorf("creating resources_fts: %w", err)
+	}
+	if err := rebuildResourcesFTS(ctx, conn); err != nil {
+		return fmt.Errorf("rebuilding resources_fts with curated content: %w", err)
+	}
+	return nil
+}
+
 func tableExists(ctx context.Context, conn *sql.Conn, name string) (bool, error) {
 	var count int
 	if err := conn.QueryRowContext(ctx, `SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name = ?`, name).Scan(&count); err != nil {
@@ -1264,6 +1299,57 @@ func resourcesTableHasCompositeKey(ctx context.Context, conn *sql.Conn) (bool, e
 		return false, fmt.Errorf("reading resources table info rows: %w", err)
 	}
 	return pk["resource_type"] == 1 && pk["id"] == 2, nil
+}
+
+// ftsContent extracts a curated, topic-bearing string from a resource's
+// JSON payload for indexing in resources_fts. Returns ONLY semantically
+// meaningful fields — title, ticker, category, etc. — and deliberately
+// drops payload-shaped noise like Kalshi's source_agencies (a list of
+// URL refs that contains strings like "oscars.org/oscars" and "Academy
+// of Motion Picture Arts and Sciences" on the Nuclear Fusion series,
+// causing it to match a query like "oscars best picture").
+//
+// PATCH(curated-fts-content): pre-v3 builds indexed the entire raw JSON
+// blob here, which is why an "oscars" query matched KXFUSION. The fix
+// is to project to a topic-relevant subset at index time; the schema
+// migration to v3 rebuilds the FTS table against this projection.
+//
+// The same key set covers every resource type the cross-venue topic
+// command searches (markets, events, tags, kalshi_markets, kalshi_events,
+// kalshi_series) and gives unknown resource types a safe, low-noise
+// fallback without per-type branching.
+func ftsContent(data string) string {
+	if data == "" {
+		return ""
+	}
+	var obj map[string]any
+	if err := json.Unmarshal([]byte(data), &obj); err != nil {
+		// Malformed JSON: index nothing rather than indexing literal
+		// braces and quotes that would never match anyway. Safer than
+		// returning the raw blob, which is what U2 is trying to stop.
+		return ""
+	}
+	// Ordered so the projection reads naturally in any debug dump:
+	// human label first, then identifiers, then categorical metadata.
+	keys := [...]string{
+		"question", "title", "name", "label", "subtitle", "yes_sub_title",
+		"slug", "ticker", "event_ticker", "series_ticker",
+		"category",
+	}
+	parts := make([]string, 0, len(keys))
+	for _, k := range keys {
+		v, ok := obj[k]
+		if !ok || v == nil {
+			continue
+		}
+		if s, ok := v.(string); ok {
+			s = strings.TrimSpace(s)
+			if s != "" {
+				parts = append(parts, s)
+			}
+		}
+	}
+	return strings.Join(parts, " ")
 }
 
 func rebuildResourcesFTS(ctx context.Context, conn *sql.Conn) error {
@@ -1297,7 +1383,7 @@ func rebuildResourcesFTS(ctx context.Context, conn *sql.Conn) error {
 	for _, r := range resources {
 		if _, err := conn.ExecContext(ctx,
 			`INSERT INTO resources_fts (rowid, id, resource_type, content) VALUES (?, ?, ?, ?)`,
-			ftsRowID(r.resourceType, r.id), r.id, r.resourceType, r.data,
+			ftsRowID(r.resourceType, r.id), r.id, r.resourceType, ftsContent(r.data),
 		); err != nil {
 			return fmt.Errorf("indexing resource %s/%s: %w", r.resourceType, r.id, err)
 		}
@@ -1433,7 +1519,7 @@ func (s *Store) upsertGenericResourceTx(tx *sql.Tx, resourceType, id string, dat
 	if _, err = tx.Exec(
 		`INSERT INTO resources_fts (rowid, id, resource_type, content)
 		 VALUES (?, ?, ?, ?)`,
-		ftsRowid, id, resourceType, string(data),
+		ftsRowid, id, resourceType, ftsContent(string(data)),
 	); err != nil {
 		// FTS insert failure is non-fatal
 		fmt.Fprintf(os.Stderr, "warning: FTS index update failed: %v\n", err)
