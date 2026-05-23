@@ -79,6 +79,55 @@ func runMovers(cmd *cobra.Command, dbPath, venue, window string, limit int) ([]m
 		return nil, fmt.Errorf("movers open database: %w", err)
 	}
 	defer db.Close()
+	// For venue=all, fetch each venue's top `limit` movers independently
+	// and round-robin them so neither venue crowds the other out. Matches
+	// the interleaving pattern trending/liquid/new/resolving use; a raw
+	// UNION ALL would let one venue's larger-delta day occupy every slot.
+	if venue == "all" {
+		pmItems, err := runMoversOneVenue(cmd, db, "polymarket", window, limit)
+		if err != nil {
+			return nil, err
+		}
+		kalshiItems, err := runMoversOneVenue(cmd, db, "kalshi", window, limit)
+		if err != nil {
+			return nil, err
+		}
+		items := interleaveMoversItems(pmItems, kalshiItems, limit)
+		// Rewrite Kalshi multi-leg titles where applicable.
+		stub := make([]marketScreenItem, len(items))
+		for i, it := range items {
+			stub[i] = marketScreenItem{Source: it.Source, ID: it.ID, Title: it.Title}
+		}
+		enrichKalshiTitles(cmd, db, stub)
+		for i := range items {
+			items[i].Title = stub[i].Title
+		}
+		return items, nil
+	}
+	items, err := runMoversOneVenue(cmd, db, venue, window, limit)
+	if err != nil {
+		return nil, err
+	}
+	if venue == "kalshi" {
+		// Rewrite Kalshi multi-leg outcome-CSV titles to the parent
+		// event title; harmless if no items need it.
+		stub := make([]marketScreenItem, len(items))
+		for i, it := range items {
+			stub[i] = marketScreenItem{Source: it.Source, ID: it.ID, Title: it.Title}
+		}
+		enrichKalshiTitles(cmd, db, stub)
+		for i := range items {
+			items[i].Title = stub[i].Title
+		}
+	}
+	return items, nil
+}
+
+// runMoversOneVenue fetches the top movers for a single venue. Extracted
+// so the venue=all path can fetch each side independently and interleave
+// rather than letting a raw UNION ALL favor one venue's larger absolute
+// deltas.
+func runMoversOneVenue(cmd *cobra.Command, db *store.Store, venue, window string, limit int) ([]moversItem, error) {
 	sqlText := moversSQL(venue, window)
 	rows, err := db.DB().QueryContext(cmd.Context(), sqlText, limit)
 	if err != nil {
@@ -97,19 +146,33 @@ func runMovers(cmd *cobra.Command, dbPath, venue, window string, limit int) ([]m
 	if err := rows.Err(); err != nil {
 		return nil, err
 	}
-	if venue == "all" || venue == "kalshi" {
-		// Rewrite Kalshi multi-leg outcome-CSV titles to the parent
-		// event title; harmless if no items need it.
-		stub := make([]marketScreenItem, len(items))
-		for i, it := range items {
-			stub[i] = marketScreenItem{Source: it.Source, ID: it.ID, Title: it.Title}
+	return items, nil
+}
+
+// interleaveMoversItems round-robins two ranked venue slices into one
+// bundle of at most `limit` rows, dedup-free (movers are uniquely keyed
+// by source+id by construction). Mirrors the interleave shape used by
+// topic.go.
+func interleaveMoversItems(a, b []moversItem, limit int) []moversItem {
+	if limit <= 0 {
+		return nil
+	}
+	out := make([]moversItem, 0, limit)
+	ai, bi := 0, 0
+	for len(out) < limit && (ai < len(a) || bi < len(b)) {
+		if ai < len(a) {
+			out = append(out, a[ai])
+			ai++
+			if len(out) >= limit {
+				break
+			}
 		}
-		enrichKalshiTitles(cmd, db, stub)
-		for i := range items {
-			items[i].Title = stub[i].Title
+		if bi < len(b) {
+			out = append(out, b[bi])
+			bi++
 		}
 	}
-	return items, nil
+	return out
 }
 
 func moversSQL(venue, window string) string {
@@ -127,12 +190,13 @@ CAST(COALESCE(json_extract(data,'$.last_price_dollars'),0) AS REAL) current_pric
 COALESCE(json_extract(data,'$.expiration_time'), json_extract(data,'$.close_time'), '') end_date,
 CAST(COALESCE(json_extract(data,'$.volume_24h_fp'),0) AS REAL) volume_24h FROM resources WHERE resource_type='kalshi_markets'`
 	switch venue {
-	case "polymarket":
-		return "SELECT * FROM (" + pm + ") ORDER BY ABS(delta) DESC LIMIT ?"
 	case "kalshi":
 		return "SELECT * FROM (" + ks + ") ORDER BY ABS(delta) DESC LIMIT ?"
 	default:
-		return "SELECT * FROM (" + pm + " UNION ALL " + ks + ") ORDER BY ABS(delta) DESC LIMIT ?"
+		// venue=polymarket. venue=all is handled at the runMovers layer
+		// by fetching each venue independently and interleaving, matching
+		// the interleave shape of trending/liquid/new/resolving.
+		return "SELECT * FROM (" + pm + ") ORDER BY ABS(delta) DESC LIMIT ?"
 	}
 }
 

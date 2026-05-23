@@ -217,6 +217,14 @@ FROM resources WHERE resource_type='kalshi_events' AND id IN (` + strings.Join(p
 					resolved[idx] = true
 				}
 			}
+			// Surface mid-iteration row errors (context cancellation, WAL
+			// write contention) on stderr so the fallback summary path
+			// isn't silently masking real DB trouble. Best-effort
+			// enrichment, so a warning is enough; the summarized
+			// fallback below still runs.
+			if rerr := rows.Err(); rerr != nil {
+				fmt.Fprintf(cmd.ErrOrStderr(), "warning: enrichKalshiTitles: %v\n", rerr)
+			}
 		}
 	}
 	// Fallback: any remaining multi-leg titles get summarized so they
@@ -335,15 +343,11 @@ CAST(COALESCE(json_extract(data,'$.volume_24h_fp'),0) AS REAL) sort_value FROM r
 	return "SELECT source, id, title, yes, volume, liquidity, end_date FROM (" + strings.Join(parts, " UNION ALL ") + ") ORDER BY " + screenOrder(screen) + " LIMIT ?", append(args, limit)
 }
 
-func screenOrder(screen string) string {
-	switch screen {
-	case "new":
-		return "sort_value DESC"
-	case "resolving":
-		return "sort_value DESC"
-	default:
-		return "sort_value DESC"
-	}
+// screenOrder used to switch sort order per screen but every branch now
+// returns the same expression. Keep the function for callsite clarity
+// and so any future per-screen ordering lands in one place.
+func screenOrder(_ string) string {
+	return "sort_value DESC"
 }
 
 func renderTrending(cmd *cobra.Command, flags *rootFlags, result trendingResult) error {

@@ -23,8 +23,15 @@ func topicFTSQuery(s string) string {
 	for _, part := range parts {
 		quoted = append(quoted, `"`+part+`"`)
 	}
-	if len(quoted) <= 1 {
-		return strings.Join(quoted, " ")
+	if len(quoted) == 0 {
+		// Empty MATCH parameter triggers a SQLite FTS5 parse error rather
+		// than returning zero rows. Return a sentinel that matches nothing
+		// so callers see a clean empty result instead of an engine error
+		// when the input was all separators (e.g. "---" or "-_-").
+		return `""`
+	}
+	if len(quoted) == 1 {
+		return quoted[0]
 	}
 	return strings.Join(quoted, " OR ")
 }

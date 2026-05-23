@@ -51,7 +51,8 @@ func TestTopicFTSQueryOrJoin(t *testing.T) {
 		{"kanye west", `"kanye" OR "west"`},
 		{"kanye-west", `"kanye" OR "west"`},
 		{"NBA Western Conference Finals", `"NBA" OR "Western" OR "Conference" OR "Finals"`},
-		{"", ""},
+		{"", `""`},     // Empty input returns a sentinel that matches nothing rather than triggering an FTS5 parse error.
+		{"---", `""`}, // All-separator input collapses to the same sentinel.
 	}
 	for _, tc := range cases {
 		tc := tc
