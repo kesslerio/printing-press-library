@@ -75,8 +75,10 @@ func TestUpsertLearning_InsertsAndBumpsConfidence(t *testing.T) {
 	if len(rows) != 1 {
 		t.Fatalf("want 1 row, got %d", len(rows))
 	}
-	if rows[0].Confidence != 2 {
-		t.Errorf("want confidence 2 after two teaches, got %d", rows[0].Confidence)
+	// Per U4, first teach lands at confidence=2 (clears the skill's
+	// skip threshold immediately); re-confirmation bumps to 3.
+	if rows[0].Confidence != 3 {
+		t.Errorf("want confidence 3 after two teaches (2 floor + 1 bump), got %d", rows[0].Confidence)
 	}
 }
 
@@ -197,7 +199,8 @@ func TestRecall_MinConfidenceAndLimit(t *testing.T) {
 	}); err != nil {
 		t.Fatalf("upsert A: %v", err)
 	}
-	// Bump confidence on the second one to 2 by re-teaching.
+	// Per U4: first teach lands at conf=2. Two teaches on B bumps to 3.
+	// A stays at 2. min-confidence=3 isolates B.
 	for i := 0; i < 2; i++ {
 		if _, _, err := s.UpsertLearning(store.UpsertLearningInput{
 			Query:      "portugal world cup",
@@ -207,7 +210,7 @@ func TestRecall_MinConfidenceAndLimit(t *testing.T) {
 		}
 	}
 
-	matches, err := s.Recall(context.Background(), "portugal world cup", store.RecallOptions{MinConfidence: 2})
+	matches, err := s.Recall(context.Background(), "portugal world cup", store.RecallOptions{MinConfidence: 3})
 	if err != nil {
 		t.Fatalf("recall min-conf: %v", err)
 	}

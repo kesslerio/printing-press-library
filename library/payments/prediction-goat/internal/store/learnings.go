@@ -237,11 +237,19 @@ func (s *Store) UpsertLearning(in UpsertLearningInput) (int64, bool, error) {
 		queryEntities = string(b)
 	}
 
+	// U4: initial confidence is 2, not 1. The skill protocol says "skip
+	// discovery on confidence>=2 + entity_match=exact", so landing at 1
+	// meant the very first re-use never tripped the fast path -- the
+	// learning effectively wasn't useful until its second observation,
+	// which usually came too late to matter. Starting at 2 means the
+	// first taught mapping is immediately load-bearing. Re-confirmations
+	// (the UPDATE branch above) still bump by 1, so high-confidence rows
+	// (3+) remain a meaningful signal for ranking ties.
 	res, err := tx.Exec(
 		`INSERT INTO search_learnings
 		 (query_pattern, query_entities, venue, resource_type, resource_id, action, alias_target,
 		  source, confidence, created_at, last_observed_at, notes)
-		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, 1, ?, ?, ?)`,
+		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, 2, ?, ?, ?)`,
 		pattern, queryEntities, venue, resourceType, in.ResourceID, action, aliasTarget,
 		source, now, now, notes,
 	)

@@ -288,9 +288,12 @@ func TestRecall_LowConfidenceWarning(t *testing.T) {
 	if !got.Found || len(got.Results) != 1 {
 		t.Fatalf("want one result; got %+v", got)
 	}
-	// First teach lands at confidence=1 in v3->v4; U4 will bump to 2.
-	if !sliceContains(got.Results[0].Warnings, learn.WarningLowConfidence) {
-		t.Errorf("want low_confidence warning for first teach; got %v", got.Results[0].Warnings)
+	// Post-U4, first teach lands at confidence=2, which clears the
+	// skill's >=2 skip threshold immediately. The low_confidence warning
+	// only attaches to rows below that floor (legacy v3 data or rows
+	// downgraded by external mutation), not to fresh teaches.
+	if sliceContains(got.Results[0].Warnings, learn.WarningLowConfidence) {
+		t.Errorf("first teach should NOT carry low_confidence warning (U4 floor=2); got %v", got.Results[0].Warnings)
 	}
 }
 
@@ -301,13 +304,15 @@ func TestRecall_MinConfidenceFiltersBelowThreshold(t *testing.T) {
 	})
 	seedLearning(t, s, "USA wins world cup", "kalshi_markets", "KX-Z")
 
-	got, err := learn.Recall(context.Background(), s.DB(), "USA wins world cup", learn.Opts{MinConfidence: 2})
+	// Post-U4, the single-teach floor is 2. To verify min-confidence
+	// filtering, use a threshold ABOVE the floor.
+	got, err := learn.Recall(context.Background(), s.DB(), "USA wins world cup", learn.Opts{MinConfidence: 3})
 	if err != nil {
 		t.Fatalf("recall: %v", err)
 	}
-	// One teach => confidence=1 => below MinConfidence=2 floor => no results.
+	// One teach => confidence=2 => below MinConfidence=3 floor => no results.
 	if got.Found || len(got.Results) != 0 {
-		t.Errorf("MinConfidence=2 should filter the single-teach row; got %+v", got)
+		t.Errorf("MinConfidence=3 should filter the single-teach row; got %+v", got)
 	}
 	// Top-level warning should signal empty result set.
 	if !sliceContains(got.Warnings, learn.TopWarningNoLearningsForQueryFamily) {

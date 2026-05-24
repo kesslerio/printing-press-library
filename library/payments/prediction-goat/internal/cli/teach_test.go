@@ -123,8 +123,10 @@ func TestTeachCommand_IdempotentBumpsConfidence(t *testing.T) {
 	if len(rows) != 1 {
 		t.Fatalf("expected 1 row after re-teach, got %d", len(rows))
 	}
-	if rows[0].Confidence != 2 {
-		t.Errorf("confidence should bump to 2 on re-teach, got %d", rows[0].Confidence)
+	// Per U4: first teach lands at confidence=2 (clears skill threshold
+	// immediately), re-teach bumps to 3.
+	if rows[0].Confidence != 3 {
+		t.Errorf("confidence should be 3 after two teaches (U4 floor=2 + 1 bump), got %d", rows[0].Confidence)
 	}
 }
 
@@ -346,7 +348,9 @@ func TestRecallCommand_MinConfidence(t *testing.T) {
 	home := withTempHome(t)
 	dbPath := filepath.Join(home, "data.db")
 
-	// One teach for A (conf=1), two teaches for B (conf=2).
+	// Per U4, first teach lands at confidence=2 (not 1). One teach for
+	// A keeps it at 2; two teaches for B bumps it to 3. min-confidence=3
+	// drops A and keeps B.
 	if _, _, err := runRootArgs(t,
 		"teach", "--query", "portugal world cup", "--resource", "A", "--db", dbPath); err != nil {
 		t.Fatalf("seed A: %v", err)
@@ -361,7 +365,7 @@ func TestRecallCommand_MinConfidence(t *testing.T) {
 	stdout, _, err := runRootArgs(t,
 		"recall", "portugal world cup",
 		"--db", dbPath,
-		"--min-confidence", "2",
+		"--min-confidence", "3",
 		"--agent",
 	)
 	if err != nil {
@@ -703,14 +707,15 @@ func TestRecallCommand_DebugMismatchesFlag(t *testing.T) {
 	}
 }
 
-// TestRecallCommand_MinConfidenceFilters verifies the existing
-// --min-confidence flag continues to work end-to-end through the new
-// learn.Recall path.
+// TestRecallCommand_MinConfidenceFilters verifies the --min-confidence
+// flag works end-to-end through the new learn.Recall path. Per U4, the
+// first teach lands at confidence=2, so the threshold that distinguishes
+// "just-taught" from "re-confirmed" is now 3, not 2.
 func TestRecallCommand_MinConfidenceFiltersAtCLI(t *testing.T) {
 	home := withTempHome(t)
 	dbPath := filepath.Join(home, "data.db")
 
-	// One teach -> confidence=1.
+	// One teach -> confidence=2 (U4 floor).
 	if _, _, err := runRootArgs(t,
 		"teach", "--query", "portugal world cup", "--resource", "A",
 		"--db", dbPath,
@@ -718,11 +723,11 @@ func TestRecallCommand_MinConfidenceFiltersAtCLI(t *testing.T) {
 		t.Fatalf("seed: %v", err)
 	}
 
-	// --min-confidence 2 should filter the single-teach row.
+	// --min-confidence 3 should drop the single-teach row.
 	stdout, _, err := runRootArgs(t,
 		"recall", "portugal world cup",
 		"--db", dbPath,
-		"--min-confidence", "2",
+		"--min-confidence", "3",
 		"--agent",
 	)
 	if err != nil {
@@ -733,7 +738,7 @@ func TestRecallCommand_MinConfidenceFiltersAtCLI(t *testing.T) {
 		t.Fatalf("recall JSON: %v", err)
 	}
 	if env.Found || len(env.Results) != 0 {
-		t.Errorf("min-confidence 2 should drop conf=1 row; got %+v", env)
+		t.Errorf("min-confidence 3 should drop conf=2 row; got %+v", env)
 	}
 }
 
