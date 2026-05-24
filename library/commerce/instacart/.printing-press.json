@@ -1,7 +1,7 @@
 {
   "schema_version": 1,
   "generated_at": "2026-04-11T06:12:25Z",
-  "printing_press_version": "1.2.1",
+  "printing_press_version": "4.14.0+learn-loop",
   "api_name": "instacart",
   "cli_name": "instacart-pp-cli",
   "printer": "mvanhorn",

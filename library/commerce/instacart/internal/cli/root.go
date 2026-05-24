@@ -145,5 +145,43 @@ No browser automation. No Playwright. No Composio subscription. Just a binary.`,
 		newHistoryCmd(),
 	)
 
+	learnCfg := newLearnConfig()
+	var learnFlags rootFlags
+	root.PersistentFlags().BoolVar(&learnFlags.noLearn, "no-learn", false, "Disable the teach/recall learning loop for this invocation")
+	root.AddCommand(newTeachCmd(&learnFlags, learnCfg))
+	root.AddCommand(newRecallCmd(&learnFlags, learnCfg))
+	root.AddCommand(newLearningsCmd(&learnFlags, learnCfg))
+	root.AddCommand(newTeachPatternCmd(&learnFlags))
+	root.AddCommand(newTeachLookupCmd(&learnFlags))
 	return root
+}
+
+// learnHookSkipList enumerates framework command names that any
+// future PersistentPreRunE recall hook must NOT trigger on. Today the
+// teach/recall path is invoked explicitly by the agent, so there is
+// no consumer of this list at runtime; the skip-list ships in v1 as
+// forward-looking framework so a later auto-recall hook can consult
+// it without re-deriving the set in every PR.
+//
+// Names match the cobra Use: field. Aliases are matched as-is.
+var learnHookSkipList = map[string]struct{}{
+	"auth":          {},
+	"doctor":        {},
+	"help":          {},
+	"sync":          {},
+	"profile":       {},
+	"feedback":      {},
+	"which":         {},
+	"agent-context": {},
+	"completion":    {},
+	"version":       {},
+}
+
+// shouldSkipLearnHook reports whether a recall pre-run hook should
+// short-circuit for cmdName. Used today only by unit tests asserting
+// the contents of learnHookSkipList; reserved for a future
+// PersistentPreRunE auto-recall integration.
+func shouldSkipLearnHook(cmdName string) bool {
+	_, skip := learnHookSkipList[cmdName]
+	return skip
 }

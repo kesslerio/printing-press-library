@@ -18,6 +18,34 @@ metadata:
 
 # Instacart - Printing Press CLI
 
+<!-- pp-learn-section-start -->
+## Automatic Learning
+
+This CLI ships a self-learning loop. When you run instacart-pp-cli commands, the binary
+quietly records the queries and the resources you act on so future
+recall calls can rerank results based on prior success.
+
+What the loop does on each command:
+
+- `recall` looks up prior queries that overlap with the current one
+  via a token-set Jaccard match (floor 0.6) and returns the resources
+  that were associated with those queries, ranked by confidence and
+  entity overlap.
+- `teach` records a query / resource association so future
+  recall calls can find it.
+- `learnings` lists what the loop has stored locally so you can
+  audit and curate the dataset.
+
+Opting out: pass `--no-learn` on the root command (e.g.
+`instacart-pp-cli --no-learn <command>`) to disable the loop's side effects for
+one invocation.
+
+The learn store lives alongside the regular SQLite cache and is
+populated additively on each command — there is no separate sync
+step. See the printed CLI's `internal/learn/` source for the loop's
+schema and the match scoring contract.
+<!-- pp-learn-section-end -->
+
 ## Prerequisites: Install the CLI
 
 This skill drives the `instacart-pp-cli` binary. **You must verify the CLI is installed before invoking any command from this skill.** If it is missing, install it first:
