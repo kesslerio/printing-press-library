@@ -162,6 +162,21 @@
       ],
       "validated_outcome": "go test ./... passes (501 tests, +35 across lookups CRUD, computed kinds, seed counts, v4->v5 migration, teach-lookup CLI). go vet clean. verify_skill.py passes. Fresh DB at v5 inserts 923 entity_lookup rows: country_iso2 (236), country_iso3 (205), country_lowercase (145), NFL/NBA/MLB/MLS team abbrev+lowercase combined (337). Computed-kind Lookup never touches the DB (nil-DB tests pass). User taught rows coexist with seeded rows under the (kind, canonical, value) PK; INSERT OR IGNORE makes re-seeding idempotent.",
       "upstream_issue": "Pending: lift internal/learn/lookups + its seeds subpackage into the generator template as an opt-in 'reference-data' module. The domain-agnostic API surface (Lookup/LookupAll/Upsert/IsComputedKind) plus the seed-file convention (one .go file per domain, []LookupRow at compile time) generalizes to any CLI that benefits from canonical name->code mappings (stock tickers, currency codes, etc.)."
+    },
+    {
+      "id": "teach-time-resource-shape-validation",
+      "summary": "Add teach-time resource-shape validator (U6): emits structured warnings to teach.log when an LLM teaches against a Kalshi parent event AND a child market matches the query entity, or when query entities don't overlap with the resource's entities. Teach succeeds silently; warnings are diagnostic. Adds --no-validate flag to teach and --warnings flag to learnings list.",
+      "reason": "Pre-U6 the parent-vs-child guard fired at recall time, which meant an LLM that taught the parent ticker once never learned to teach the child. The validator runs after upsert, so an offline grep of teach.log surfaces the pattern of LLMs taking the lazy path. Soft warning by design -- a teach against the parent IS legitimate when the query is categorical (no entities), so the validator only fires when the query has entities AND a strictly-better child exists. Per docs/plans/2026-05-23-002 section U6.",
+      "files": [
+        "internal/learn/teach.go",
+        "internal/learn/teach_test.go",
+        "internal/learn/teach_log.go",
+        "internal/learn/teach_log_test.go",
+        "internal/cli/teach.go",
+        "internal/cli/teach_test.go"
+      ],
+      "validated_outcome": "go test ./... passes (560 tests, +24 across validator/log/CLI). go vet clean. verify_skill.py passes. Flagship replay: teach KXMENWORLDCUP-26 against 'odds USA wins world cup' when child KXMENWORLDCUP-26-US carries yes_sub_title=USA produces a parent_event_when_child_exists JSONL entry in teach.log naming the child. --no-validate suppresses cleanly. learnings list --warnings --agent returns {warnings: [...]} with the same entries, filterable by --resource. Polymarket-side parent detection is intentionally deferred (TODO referenced in teach.go), matching the U6 plan's Deferred section.",
+      "upstream_issue": "Liftable target: internal/learn/teach.go + teach_log.go depend only on database/sql, the entities extractor, and match.go's IsKalshiParentTicker / ResourceEntities / ClassifyEntityMatch. Ready to lift into the generator template alongside U1/U2/U3 once the broader learn-package template extraction lands."
     }
   ]
 }

@@ -11,6 +11,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/mvanhorn/printing-press-library/library/payments/prediction-goat/internal/learn"
 	"github.com/mvanhorn/printing-press-library/library/payments/prediction-goat/internal/store"
 )
 
@@ -749,4 +750,227 @@ func envSliceContains(haystack []string, needle string) bool {
 		}
 	}
 	return false
+}
+
+// seedKalshiParentAndChild populates the resources table with a Kalshi
+// parent event and one child market carrying the supplied
+// yes_sub_title. Used by the U6 teach-time validator integration tests
+// to set up the USA-vs-parent-ticker replay scenario.
+func seedKalshiParentAndChild(t *testing.T, dbPath, parent, child, subtitle string) {
+	t.Helper()
+	s, err := store.OpenWithContext(context.Background(), dbPath)
+	if err != nil {
+		t.Fatalf("open store: %v", err)
+	}
+	defer s.Close()
+
+	parentJSON, _ := json.Marshal(map[string]any{
+		"title":         "2026 Men's World Cup Winner",
+		"event_ticker":  parent,
+		"series_ticker": "KXMENWORLDCUP",
+	})
+	if err := s.Upsert("kalshi_events", parent, parentJSON); err != nil {
+		t.Fatalf("seed parent: %v", err)
+	}
+	childJSON, _ := json.Marshal(map[string]any{
+		"title":         "FIFA Men's World Cup 2026 Winner",
+		"yes_sub_title": subtitle,
+		"ticker":        child,
+		"event_ticker":  parent,
+	})
+	if err := s.Upsert("kalshi_markets", child, childJSON); err != nil {
+		t.Fatalf("seed child: %v", err)
+	}
+}
+
+// TestTeachCommand_U6_ParentEventTriggersWarning replays the
+// USA-vs-KXMENWORLDCUP-26 failure trace from the U6 plan: an LLM
+// teaches against the parent event when a child market matches the
+// query entity. The teach succeeds (silent), and teach.log records
+// a parent_event_when_child_exists warning naming the child.
+func TestTeachCommand_U6_ParentEventTriggersWarning(t *testing.T) {
+	home := withTempHome(t)
+	dbPath := filepath.Join(home, "data.db")
+	seedKalshiParentAndChild(t, dbPath, "KXMENWORLDCUP-26", "KXMENWORLDCUP-26-US", "USA")
+
+	stdout, stderr, err := runRootArgs(t,
+		"teach",
+		"--query", "odds USA wins world cup",
+		"--resource", "KXMENWORLDCUP-26",
+		"--resource-type", "kalshi_events",
+		"--db", dbPath,
+	)
+	if err != nil {
+		t.Fatalf("teach exited non-zero: %v (stderr=%q)", err, stderr)
+	}
+	if stdout != "" {
+		t.Errorf("teach should be silent on success; stdout=%q", stdout)
+	}
+	if stderr != "" {
+		t.Errorf("teach should be silent on success; stderr=%q", stderr)
+	}
+
+	entries, err := learn.ReadTeachLogWarnings()
+	if err != nil {
+		t.Fatalf("read teach.log: %v", err)
+	}
+	var matched *learn.TeachLogEntry
+	for i := range entries {
+		if entries[i].Warning == learn.WarningParentEventWhenChildExists {
+			matched = &entries[i]
+			break
+		}
+	}
+	if matched == nil {
+		t.Fatalf("want %s warning in teach.log; got %+v", learn.WarningParentEventWhenChildExists, entries)
+	}
+	if matched.Suggested != "KXMENWORLDCUP-26-US" {
+		t.Errorf("want suggested=KXMENWORLDCUP-26-US, got %q", matched.Suggested)
+	}
+	if matched.Query != "odds USA wins world cup" {
+		t.Errorf("want query preserved verbatim; got %q", matched.Query)
+	}
+}
+
+// TestTeachCommand_U6_NoValidateSuppressesWarnings ensures the
+// --no-validate flag turns the validator off cleanly. The same
+// scenario that produced a warning above produces no teach.log
+// entries with the flag set.
+func TestTeachCommand_U6_NoValidateSuppressesWarnings(t *testing.T) {
+	home := withTempHome(t)
+	dbPath := filepath.Join(home, "data.db")
+	seedKalshiParentAndChild(t, dbPath, "KXMENWORLDCUP-26", "KXMENWORLDCUP-26-US", "USA")
+
+	_, _, err := runRootArgs(t,
+		"teach",
+		"--query", "odds USA wins world cup",
+		"--resource", "KXMENWORLDCUP-26",
+		"--resource-type", "kalshi_events",
+		"--no-validate",
+		"--db", dbPath,
+	)
+	if err != nil {
+		t.Fatalf("teach: %v", err)
+	}
+
+	entries, err := learn.ReadTeachLogWarnings()
+	if err != nil {
+		t.Fatalf("read teach.log: %v", err)
+	}
+	for _, e := range entries {
+		if e.Warning == learn.WarningParentEventWhenChildExists {
+			t.Errorf("--no-validate should suppress parent warnings; got %+v", e)
+		}
+	}
+}
+
+// TestLearningsListCommand_U6_WarningsFlag asserts the new
+// `learnings list --warnings --agent` surface returns the
+// JSONL-derived entries as a `warnings` array.
+func TestLearningsListCommand_U6_WarningsFlag(t *testing.T) {
+	home := withTempHome(t)
+	dbPath := filepath.Join(home, "data.db")
+	seedKalshiParentAndChild(t, dbPath, "KXMENWORLDCUP-26", "KXMENWORLDCUP-26-US", "USA")
+
+	if _, _, err := runRootArgs(t,
+		"teach",
+		"--query", "odds USA wins world cup",
+		"--resource", "KXMENWORLDCUP-26",
+		"--resource-type", "kalshi_events",
+		"--db", dbPath,
+	); err != nil {
+		t.Fatalf("seed teach: %v", err)
+	}
+
+	stdout, _, err := runRootArgs(t,
+		"learnings", "list", "--warnings", "--agent",
+	)
+	if err != nil {
+		t.Fatalf("learnings list --warnings: %v", err)
+	}
+	var env struct {
+		Warnings []learn.TeachLogEntry `json:"warnings"`
+	}
+	if err := json.Unmarshal([]byte(stdout), &env); err != nil {
+		t.Fatalf("decode warnings envelope: %v (stdout=%q)", err, stdout)
+	}
+	if len(env.Warnings) == 0 {
+		t.Fatalf("want at least one warning in envelope; got %+v", env)
+	}
+	if env.Warnings[0].Warning != learn.WarningParentEventWhenChildExists {
+		t.Errorf("want first warning code=%s, got %q",
+			learn.WarningParentEventWhenChildExists, env.Warnings[0].Warning)
+	}
+	_ = home // keep withTempHome HOME alive on read.
+}
+
+// TestLearningsListCommand_U6_WarningsFlagEmptyEnvelope confirms the
+// envelope shape is stable (`warnings: []`) when teach.log doesn't
+// exist yet -- so an LLM jq-ing `.warnings | length` doesn't trip on
+// null.
+func TestLearningsListCommand_U6_WarningsFlagEmptyEnvelope(t *testing.T) {
+	withTempHome(t)
+
+	stdout, _, err := runRootArgs(t,
+		"learnings", "list", "--warnings", "--agent",
+	)
+	if err != nil {
+		t.Fatalf("learnings list --warnings: %v", err)
+	}
+	var env struct {
+		Warnings []learn.TeachLogEntry `json:"warnings"`
+	}
+	if err := json.Unmarshal([]byte(stdout), &env); err != nil {
+		t.Fatalf("decode warnings envelope: %v (stdout=%q)", err, stdout)
+	}
+	if env.Warnings == nil {
+		t.Errorf("warnings should be [] (non-nil); got %v", env.Warnings)
+	}
+}
+
+// TestLearningsListCommand_U6_WarningsFilterByResource verifies the
+// existing --resource flag filters the warnings stream when used
+// with --warnings.
+func TestLearningsListCommand_U6_WarningsFilterByResource(t *testing.T) {
+	home := withTempHome(t)
+	dbPath := filepath.Join(home, "data.db")
+	seedKalshiParentAndChild(t, dbPath, "KXMENWORLDCUP-26", "KXMENWORLDCUP-26-US", "USA")
+	seedKalshiParentAndChild(t, dbPath, "KXNBAFINALS-26", "KXNBAFINALS-26-LAL", "Lakers")
+
+	// Teach against both parents to seed two warnings.
+	if _, _, err := runRootArgs(t,
+		"teach", "--query", "odds USA wins world cup",
+		"--resource", "KXMENWORLDCUP-26", "--resource-type", "kalshi_events",
+		"--db", dbPath,
+	); err != nil {
+		t.Fatalf("teach 1: %v", err)
+	}
+	if _, _, err := runRootArgs(t,
+		"teach", "--query", "Lakers win NBA finals",
+		"--resource", "KXNBAFINALS-26", "--resource-type", "kalshi_events",
+		"--db", dbPath,
+	); err != nil {
+		t.Fatalf("teach 2: %v", err)
+	}
+
+	stdout, _, err := runRootArgs(t,
+		"learnings", "list", "--warnings",
+		"--resource", "KXNBAFINALS-26",
+		"--agent",
+	)
+	if err != nil {
+		t.Fatalf("learnings list --warnings --resource: %v", err)
+	}
+	var env struct {
+		Warnings []learn.TeachLogEntry `json:"warnings"`
+	}
+	if err := json.Unmarshal([]byte(stdout), &env); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if len(env.Warnings) != 1 {
+		t.Fatalf("want exactly 1 warning (NBA), got %d (%+v)", len(env.Warnings), env.Warnings)
+	}
+	if env.Warnings[0].Resource != "KXNBAFINALS-26" {
+		t.Errorf("filter should keep only matching resource; got %+v", env.Warnings[0])
+	}
 }

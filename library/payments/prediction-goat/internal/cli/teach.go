@@ -132,6 +132,11 @@ func newTeachCmd(flags *rootFlags) *cobra.Command {
 	var quiet bool
 	var dbPath string
 	var notes string
+	// noValidate suppresses the U6 teach-time resource-shape validator
+	// for scripted / batch teaches where the caller has already vetted
+	// the resource shape and doesn't want a structured warning written
+	// to teach.log. The teach itself is unaffected by this flag.
+	var noValidate bool
 
 	cmd := &cobra.Command{
 		Use:   "teach",
@@ -208,6 +213,24 @@ Disabling: pass --no-learn or set PREDICTION_GOAT_NO_LEARN=true.`,
 				if len(rows) > 0 {
 					confidences[rid] = rows[0].Confidence
 				}
+
+				// U6: teach-time resource-shape validation. Soft
+				// warnings only -- the teach has already succeeded.
+				// Warnings land in teach.log; learnings list
+				// --warnings surfaces them. Disabled via
+				// --no-validate for scripted/batch teaches.
+				if !noValidate {
+					for _, w := range learn.ValidateResourceShape(cmd.Context(), db.DB(), query, rid, resourceType) {
+						if err := learn.AppendTeachLogWarning("teach", query, w); err != nil {
+							// Log-side failure is informational. The
+							// existing writeTeachLog helper goes to
+							// the same file in plain-text form so a
+							// human inspecting the log still sees
+							// the diagnostic line.
+							writeTeachLog(fmt.Sprintf("teach: warn append: %v", err))
+						}
+					}
+				}
 			}
 
 			if err := appendLearningsAudit(map[string]any{
@@ -241,6 +264,7 @@ Disabling: pass --no-learn or set PREDICTION_GOAT_NO_LEARN=true.`,
 	cmd.Flags().BoolVar(&quiet, "quiet", true, "Silent on success (default true — designed for background invocation)")
 	cmd.Flags().StringVar(&dbPath, "db", "", "Database path (default: standard cache location)")
 	cmd.Flags().StringVar(&notes, "notes", "", "Optional free-form note recorded with the learning")
+	cmd.Flags().BoolVar(&noValidate, "no-validate", false, "Suppress the U6 teach-time resource-shape validator (warnings to teach.log)")
 	return cmd
 }
 
@@ -445,18 +469,55 @@ func newLearningsListCmd(flags *rootFlags) *cobra.Command {
 	var minConf int
 	var limit int
 	var dbPath string
+	// warningsOnly switches the output to U6 teach.log entries. When
+	// true, the envelope omits the row list and returns the structured
+	// warnings filtered (optionally) by --resource.
+	var warningsOnly bool
 
 	cmd := &cobra.Command{
 		Use:   "list",
 		Short: "List recorded learnings",
 		Example: `  prediction-goat-pp-cli learnings list --agent
   prediction-goat-pp-cli learnings list --query portugal
-  prediction-goat-pp-cli learnings list --source taught --agent`,
+  prediction-goat-pp-cli learnings list --source taught --agent
+  prediction-goat-pp-cli learnings list --warnings --agent`,
 		Annotations: map[string]string{"mcp:read-only": "true"},
 		RunE: func(cmd *cobra.Command, args []string) error {
 			if dryRunOK(flags) {
 				return nil
 			}
+
+			// --warnings reads teach.log directly. No DB needed.
+			if warningsOnly {
+				var filterIDs []string
+				if strings.TrimSpace(resourceFilter) != "" {
+					filterIDs = []string{resourceFilter}
+				}
+				entries, err := learn.ReadTeachLogWarnings(filterIDs...)
+				if err != nil {
+					return fmt.Errorf("learnings list --warnings: %w", err)
+				}
+				// Always return a non-nil slice so JSON consumers
+				// (`jq '.warnings | length'`) don't trip on null.
+				if entries == nil {
+					entries = []learn.TeachLogEntry{}
+				}
+				if flags.asJSON || !isTerminal(cmd.OutOrStdout()) {
+					return printJSONFiltered(cmd.OutOrStdout(), map[string]any{
+						"warnings": entries,
+					}, flags)
+				}
+				if len(entries) == 0 {
+					fmt.Fprintln(cmd.OutOrStdout(), "(no teach.log warnings recorded)")
+					return nil
+				}
+				for _, e := range entries {
+					fmt.Fprintf(cmd.OutOrStdout(), "%s\t%s\t%s\tsuggested=%s\n",
+						e.TS, e.Warning, e.Resource, e.Suggested)
+				}
+				return nil
+			}
+
 			if dbPath == "" {
 				dbPath = defaultDBPath("prediction-goat-pp-cli")
 			}
@@ -499,6 +560,7 @@ func newLearningsListCmd(flags *rootFlags) *cobra.Command {
 	cmd.Flags().IntVar(&minConf, "min-confidence", 0, "Filter by minimum confidence")
 	cmd.Flags().IntVar(&limit, "limit", 200, "Maximum rows to return")
 	cmd.Flags().StringVar(&dbPath, "db", "", "Database path (default: standard cache location)")
+	cmd.Flags().BoolVar(&warningsOnly, "warnings", false, "Return U6 teach-time warnings from teach.log instead of stored learning rows")
 	return cmd
 }
 
