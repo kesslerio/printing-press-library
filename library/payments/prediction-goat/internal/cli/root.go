@@ -244,6 +244,15 @@ See README.md or the bundled SKILL.md for recipes.`,
 		default:
 			return fmt.Errorf("invalid --data-source value %q: must be auto, live, or local", flags.dataSource)
 		}
+		// PATCH(learn-loop-backport U9): seed embedded playbooks into
+		// learning_playbooks on first CLI invocation per process.
+		// Gated by sync.Once + sentinel row, so subsequent invocations
+		// short-circuit. Skipped when learning is opted out so the
+		// no-learn contract stays clean (no DB writes for opt-out
+		// users).
+		if !noLearnActive(flags) {
+			runPlaybookInitOnce(cmd.Context())
+		}
 		return nil
 	}
 	rootCmd.AddCommand(newCommentsCmd(flags))
