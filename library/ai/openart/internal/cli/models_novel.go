@@ -109,7 +109,14 @@ covers your needs before committing credits to a Seedance/Veo run.`,
 						continue
 					}
 				}
-				if resolution != "" {
+				// PATCH(models-cheapest-resolution-opt-in): only filter on resolution
+				// when the user explicitly set --resolution. The default "720p" is a
+				// sensible video default but image models' PixelResolutions are pixel
+				// shapes ("1024x1024"), so the implicit "720p" filter excluded every
+				// image model from `models cheapest --family image` even though the
+				// flag wasn't actually passed. The default still feeds cost estimation
+				// below. Greptile P1 on PR #554.
+				if cmd.Flags().Changed("resolution") && resolution != "" {
 					supported := m.Resolutions
 					if m.Family == openartmodels.FamilyImage {
 						supported = m.PixelResolutions

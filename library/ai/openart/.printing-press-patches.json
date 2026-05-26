@@ -100,6 +100,15 @@
         "internal/cli/cost.go"
       ],
       "validated_outcome": "go build + go vet + go test ./... pass (193/12). Local estimate for image models no longer multiplies by a fake 5s duration; --live topaz call uses the family-appropriate capability + body."
+    },
+    {
+      "id": "models-cheapest-resolution-opt-in",
+      "summary": "models cheapest only filters on --resolution when the user explicitly passed it; the default '720p' no longer excludes every image model.",
+      "reason": "The --resolution flag defaults to '720p' for video estimation but image-family PixelResolutions are pixel shapes like '1024x1024'. The filter was treating the implicit default as a hard requirement, so 'models cheapest --family image' returned an empty list on every invocation. Gating the filter on cmd.Flags().Changed('resolution') keeps the default for cost-estimate use but only filters when the user explicitly asked. Greptile P1 on PR #554.",
+      "files": [
+        "internal/cli/models_novel.go"
+      ],
+      "validated_outcome": "go build/vet/test all green; 'models cheapest --family image --agent' now returns the catalog (Nano Banana etc.) instead of an empty list; 'models cheapest --family video' control case unchanged."
     }
   ]
 }
