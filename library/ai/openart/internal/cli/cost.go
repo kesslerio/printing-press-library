@@ -136,7 +136,7 @@ This is a read-only operation; no credits are spent.`,
 					"imageCount":  count,
 					"aspectRatio": "1:1",
 				}
-				if resolution != "" {
+				if cmd.Flags().Changed("resolution") && resolution != "" {
 					topazInput["resolution"] = resolution
 				}
 			}
