@@ -590,13 +590,13 @@ func (c *Client) doInternal(method, path string, params map[string]string, body 
 		// Owner-api 404 on a vehicle read while a Fleet fallback is armed: the
 		// owner-api only 404s a vehicle read for a car it doesn't serve (2021+ /
 		// non-NA), so re-issue the same read through the regional Fleet API.
-		// One-shot: the retry runs with FleetMode=true, which can't re-enter this
-		// branch. This covers the mixed-account gap that the per-install
-		// teslaShouldUseFleetForReads heuristic leaves open (see its doc comment).
+		// Scoped to this one call (see retryViaFleet) so a reused client is not
+		// permanently redirected — a mixed account may still read a pre-2021 car
+		// (possibly never enrolled in Fleet) by numeric id afterward. Covers the
+		// gap the per-install teslaShouldUseFleetForReads heuristic leaves open.
 		if resp.StatusCode == http.StatusNotFound && c.FleetFallback && !c.FleetMode &&
 			method == http.MethodGet && isVehicleReadPath(path) {
-			c.ActivateFleetFallback()
-			return c.doInternal(method, path, params, body, headerOverrides, readOnlyIntent)
+			return c.retryViaFleet(method, path, params, body, headerOverrides, readOnlyIntent)
 		}
 
 		// Client error or retries exhausted - return the error
@@ -606,11 +606,38 @@ func (c *Client) doInternal(method, path string, params map[string]string, body 
 	return nil, 0, lastErr
 }
 
+// retryViaFleet re-issues a read through the Fleet API after an owner-api 404,
+// scoping the Fleet switch to this single call. A reused client (a multi-vehicle
+// command on a mixed account) must not be permanently redirected: a pre-2021 car
+// served by owner-api — and possibly never enrolled in Fleet — would otherwise
+// switch to Fleet mid-command and fail unrecoverably. The original BaseURL /
+// FleetMode / bearer / refresh are restored after the retry. Diagnostics that
+// want a persistent switch (reachability) call ActivateFleetFallback directly.
+func (c *Client) retryViaFleet(method, path string, params map[string]string, body any, headerOverrides map[string]string, readOnlyIntent bool) (json.RawMessage, int, error) {
+	savedBase, savedMode, savedRefresh := c.BaseURL, c.FleetMode, c.OnTokenExpired
+	savedUseFleet := false
+	if c.Config != nil {
+		savedUseFleet = c.Config.UseFleetBearer
+	}
+	defer func() {
+		c.BaseURL, c.FleetMode, c.OnTokenExpired = savedBase, savedMode, savedRefresh
+		if c.Config != nil {
+			c.Config.UseFleetBearer = savedUseFleet
+		}
+	}()
+	c.ActivateFleetFallback()
+	// FleetMode is now true, so the recursive call rewrites the path, unwraps the
+	// Fleet response, and cannot re-enter the fallback branch.
+	return c.doInternal(method, path, params, body, headerOverrides, readOnlyIntent)
+}
+
 // vehicleReadPathRe matches owner-api vehicle reads that have a Fleet
 // equivalent: the full snapshot (/vehicle_data) and the per-subset form
 // (/data_request/<name>). Used to scope the owner-api-404 Fleet fallback to
 // vehicle reads, so unrelated 404s (a bad id on another resource) don't retry.
-var vehicleReadPathRe = regexp.MustCompile(`^/api/1/vehicles/[^/]+/(vehicle_data|data_request/[a-zA-Z_]+)$`)
+// The subset-name class allows digits/hyphens to future-proof against new
+// endpoint names, matching no fewer paths than the rewrite regex it feeds.
+var vehicleReadPathRe = regexp.MustCompile(`^/api/1/vehicles/[^/]+/(vehicle_data|data_request/[a-zA-Z0-9_-]+)$`)
 
 func isVehicleReadPath(path string) bool {
 	if i := strings.IndexByte(path, '?'); i >= 0 {

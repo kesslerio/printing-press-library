@@ -110,6 +110,49 @@ func TestFleetFallback_NonVehicle404(t *testing.T) {
 	}
 }
 
+// TestFleetFallback_FullVehicleData confirms the fallback also fires for the
+// full-snapshot path (/vehicle_data), not just the data_request subsets. The
+// Fleet response is not rewritten by rewriteFleetSubsetPath, so it returns
+// as-is.
+func TestFleetFallback_FullVehicleData(t *testing.T) {
+	rt := &routingRoundTripper{ownerHost: "owner.test", fleetHost: "fleet.test"}
+	c := newFallbackClient(t, rt)
+
+	body, status, err := c.do("GET", "/api/1/vehicles/VIN123/vehicle_data", nil, nil, nil)
+	if err != nil || status != 200 {
+		t.Fatalf("expected fallback success, got status=%d err=%v", status, err)
+	}
+	if got := string(body); got != `{"response":{"charge_state":{"battery_level":71},"vehicle_id":1}}` {
+		t.Errorf("full-snapshot body not passed through: %s", got)
+	}
+	if len(rt.hits) != 2 || rt.hits[1] != "fleet.test Bearer fleet-tok" {
+		t.Errorf("expected owner attempt then fleet retry, got hits: %v", rt.hits)
+	}
+}
+
+// TestFleetFallback_ScopedRestore pins the P1 fix: a fallback must not
+// permanently redirect a reused client. After a 404-driven Fleet retry, the
+// client's base URL, FleetMode, and bearer routing are restored, so a later
+// read on the same client (e.g. a pre-2021 car in a multi-vehicle command)
+// still goes to owner-api.
+func TestFleetFallback_ScopedRestore(t *testing.T) {
+	rt := &routingRoundTripper{ownerHost: "owner.test", fleetHost: "fleet.test"}
+	c := newFallbackClient(t, rt)
+
+	if _, _, err := c.do("GET", "/api/1/vehicles/VIN123/vehicle_data", nil, nil, nil); err != nil {
+		t.Fatalf("fallback read errored: %v", err)
+	}
+	if c.FleetMode {
+		t.Error("FleetMode left true after a scoped fallback retry")
+	}
+	if c.BaseURL != "http://owner.test" {
+		t.Errorf("BaseURL = %q, want it restored to the owner host", c.BaseURL)
+	}
+	if c.Config != nil && c.Config.UseFleetBearer {
+		t.Error("UseFleetBearer left true after a scoped fallback retry")
+	}
+}
+
 func TestIsVehicleReadPath(t *testing.T) {
 	cases := []struct {
 		path string
