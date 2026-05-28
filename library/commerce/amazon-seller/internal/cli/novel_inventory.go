@@ -242,7 +242,7 @@ func computeAging(db *sql.DB, warnDays int) ([]map[string]any, error) {
 }
 
 func computeFBAvsFBM(db *sql.DB, shipCost float64) ([]map[string]any, error) {
-	rows, err := db.Query(`SELECT sku, asin, COALESCE(your_price, sales_price, 0), COALESCE(referral_fee,0), COALESCE(fba_fulfillment_fee + fba_pick_pack + fba_weight_handling + fba_order_handling,0) FROM fee_estimates`)
+	rows, err := db.Query(`SELECT sku, asin, COALESCE(your_price, sales_price, 0), COALESCE(referral_fee,0), COALESCE(fba_fulfillment_fee,0) + COALESCE(fba_pick_pack,0) + COALESCE(fba_weight_handling,0) + COALESCE(fba_order_handling,0) FROM fee_estimates`)
 	if err != nil {
 		return nil, err
 	}

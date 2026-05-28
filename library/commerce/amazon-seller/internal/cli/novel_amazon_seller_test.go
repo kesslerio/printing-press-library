@@ -128,6 +128,46 @@ func TestReturnRateComputation(t *testing.T) {
 	}
 }
 
+func TestSettlementReconciliationUsesSinceDate(t *testing.T) {
+	db := openNovelTestDB(t)
+	execSQL(t, db, `INSERT INTO order_details (order_id, sku, asin, purchase_date, quantity, item_price, item_tax, shipping_price, raw_json) VALUES ('old','SKU1','A1','2026-01-01',1,10,0,0,'{}')`)
+	execSQL(t, db, `INSERT INTO settlements (settlement_id, order_id, sku, transaction_type, amount_type, amount_description, amount, posted_date, raw_json) VALUES ('s1','old','SKU1','Order','ItemPrice','Principal',10,'2026-01-02','{}')`)
+	execSQL(t, db, `INSERT INTO order_details (order_id, sku, asin, purchase_date, quantity, item_price, item_tax, shipping_price, raw_json) VALUES ('new','SKU2','A2','2026-02-01',1,20,0,0,'{}')`)
+	execSQL(t, db, `INSERT INTO settlements (settlement_id, order_id, sku, transaction_type, amount_type, amount_description, amount, posted_date, raw_json) VALUES ('s2','new','SKU2','Order','ItemPrice','Principal',18,'2026-02-02','{}')`)
+	out, err := computeSettlementReconciliation(db, 0, "2026-01-15")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(out) != 1 || out[0]["order_id"] != "new" {
+		t.Fatalf("unexpected reconciliation rows: %#v", out)
+	}
+}
+
+func TestSKUPnlCoalescesFBAFeeComponents(t *testing.T) {
+	db := openNovelTestDB(t)
+	execSQL(t, db, `INSERT INTO order_details (order_id, sku, asin, purchase_date, quantity, item_price, item_tax, shipping_price, raw_json) VALUES ('o1','SKU1','A1','2026-02-01',2,10,0,0,'{}')`)
+	execSQL(t, db, `INSERT INTO fee_estimates (sku, asin, product_name, your_price, referral_fee, fba_fulfillment_fee, fba_weight_handling, raw_json) VALUES ('SKU1','A1','Widget',10,1,2,0.5,'{}')`)
+	out, err := computeSKUPnl(db, "", "", 0, "profit", "2026-01-15")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(out) != 1 || out[0]["fba_fee_total"].(float64) != 5 {
+		t.Fatalf("unexpected SKU P&L rows: %#v", out)
+	}
+}
+
+func TestFBAvsFBMCoalescesFBAFeeComponents(t *testing.T) {
+	db := openNovelTestDB(t)
+	execSQL(t, db, `INSERT INTO fee_estimates (sku, asin, your_price, referral_fee, fba_fulfillment_fee, fba_weight_handling, raw_json) VALUES ('SKU1','A1',20,2,3,1,'{}')`)
+	out, err := computeFBAvsFBM(db, 6)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(out) != 1 || out[0]["fba_profit_per_unit"].(float64) != 14 {
+		t.Fatalf("unexpected FBA/FBM rows: %#v", out)
+	}
+}
+
 func TestVelocityAnomalyDetection(t *testing.T) {
 	days := map[string]int{}
 	now := time.Now().UTC()

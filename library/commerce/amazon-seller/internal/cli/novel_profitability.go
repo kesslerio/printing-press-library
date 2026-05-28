@@ -96,7 +96,7 @@ func newProfitabilitySettlementReconciliationCmd(flags *rootFlags) *cobra.Comman
 				if err := r.ensureReports(ctx, settlement, marketSpec("GET_FLAT_FILE_ALL_ORDERS_DATA_BY_ORDER_DATE_GENERAL", marketplaceID, days)); err != nil {
 					return nil, err
 				}
-				return computeSettlementReconciliation(r.sqlDB, minDiscrepancy)
+				return computeSettlementReconciliation(r.sqlDB, minDiscrepancy, novelSinceDate(days))
 			})
 		},
 	}
@@ -185,7 +185,7 @@ func computeSKUPnl(db *sql.DB, sku, asin string, minUnits int, sortBy string, si
 		)
 		SELECT o.sku, o.asin, o.units, o.revenue,
 			COALESCE(f.product_name, ''), COALESCE(f.referral_fee, 0),
-			COALESCE(f.fba_fulfillment_fee + f.fba_pick_pack + f.fba_weight_handling + f.fba_order_handling, 0),
+			COALESCE(f.fba_fulfillment_fee, 0) + COALESCE(f.fba_pick_pack, 0) + COALESCE(f.fba_weight_handling, 0) + COALESCE(f.fba_order_handling, 0),
 			COALESCE(s.storage_fee, 0)
 		FROM order_rollup o
 		LEFT JOIN fee_estimates f ON f.sku = o.sku
@@ -226,10 +226,11 @@ func computeSKUPnl(db *sql.DB, sku, asin string, minUnits int, sortBy string, si
 	return out, rows.Err()
 }
 
-func computeSettlementReconciliation(db *sql.DB, minDiscrepancy float64) ([]map[string]any, error) {
+func computeSettlementReconciliation(db *sql.DB, minDiscrepancy float64, sinceDate string) ([]map[string]any, error) {
 	rows, err := db.Query(`SELECT o.order_id, o.sku, SUM(o.item_price + o.shipping_price), COALESCE(SUM(s.amount), 0)
 		FROM order_details o LEFT JOIN settlements s ON s.order_id = o.order_id AND (s.sku = o.sku OR s.sku = '')
-		GROUP BY o.order_id, o.sku`)
+		WHERE o.purchase_date >= ?
+		GROUP BY o.order_id, o.sku`, sinceDate)
 	if err != nil {
 		return nil, err
 	}
