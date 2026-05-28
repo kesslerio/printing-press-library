@@ -10,7 +10,7 @@ import (
 func newReportProductDashboardCmd(flags *rootFlags) *cobra.Command {
 	var days, limit int
 	cmd := &cobra.Command{Use: "product-dashboard", Short: "Per-product revenue, units, orders, and AOV from synced line items.", Annotations: map[string]string{"mcp:read-only": "true"}, RunE: func(cmd *cobra.Command, args []string) error {
-		db, err := openReportDB(cmd.Context(), flags)
+		db, err := openReportDB(flags)
 		if err != nil {
 			return err
 		}
@@ -43,7 +43,7 @@ func newReportProductDashboardCmd(flags *rootFlags) *cobra.Command {
 func newReportProductVelocityCmd(flags *rootFlags) *cobra.Command {
 	var days, limit int
 	cmd := &cobra.Command{Use: "product-velocity", Short: "Weekly units per product and week-over-week growth.", Annotations: map[string]string{"mcp:read-only": "true"}, RunE: func(cmd *cobra.Command, args []string) error {
-		db, err := openReportDB(cmd.Context(), flags)
+		db, err := openReportDB(flags)
 		if err != nil {
 			return err
 		}
@@ -81,7 +81,7 @@ func newReportProductVelocityCmd(flags *rootFlags) *cobra.Command {
 func newReportProductAffinityCmd(flags *rootFlags) *cobra.Command {
 	var days, limit int
 	cmd := &cobra.Command{Use: "product-affinity", Short: "Co-purchase product pairs with support, confidence, and lift.", Annotations: map[string]string{"mcp:read-only": "true"}, RunE: func(cmd *cobra.Command, args []string) error {
-		db, err := openReportDB(cmd.Context(), flags)
+		db, err := openReportDB(flags)
 		if err != nil {
 			return err
 		}
@@ -114,7 +114,7 @@ func newReportProductAffinityCmd(flags *rootFlags) *cobra.Command {
 func newReportProductCannibalizationCmd(flags *rootFlags) *cobra.Command {
 	var days, limit int
 	cmd := &cobra.Command{Use: "product-cannibalization", Short: "Product pairs with negative weekly revenue correlation.", Annotations: map[string]string{"mcp:read-only": "true"}, RunE: func(cmd *cobra.Command, args []string) error {
-		db, err := openReportDB(cmd.Context(), flags)
+		db, err := openReportDB(flags)
 		if err != nil {
 			return err
 		}
@@ -145,7 +145,7 @@ func newReportProductCannibalizationCmd(flags *rootFlags) *cobra.Command {
 func newReportProductSeasonalityCmd(flags *rootFlags) *cobra.Command {
 	var days int
 	cmd := &cobra.Command{Use: "product-seasonality", Short: "Monthly product units and seasonality index versus product monthly average.", Annotations: map[string]string{"mcp:read-only": "true"}, RunE: func(cmd *cobra.Command, args []string) error {
-		db, err := openReportDB(cmd.Context(), flags)
+		db, err := openReportDB(flags)
 		if err != nil {
 			return err
 		}

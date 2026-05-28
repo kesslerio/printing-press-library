@@ -1,7 +1,6 @@
 package cli
 
 import (
-	"context"
 	"database/sql"
 	"encoding/json"
 	"fmt"
@@ -64,7 +63,7 @@ func newReportCmd(flags *rootFlags) *cobra.Command {
 	return cmd
 }
 
-func openReportDB(ctx context.Context, flags *rootFlags) (*store.Store, error) {
+func openReportDB(flags *rootFlags) (*store.Store, error) {
 	path := defaultDBPath("shopify-pp-cli")
 	if flags != nil && strings.TrimSpace(flags.reportDBPath) != "" {
 		path = flags.reportDBPath
@@ -92,7 +91,7 @@ func newReportRevenueDailyCmd(flags *rootFlags) *cobra.Command {
 			"mcp:read-only": "true",
 		},
 		RunE: func(cmd *cobra.Command, args []string) error {
-			db, err := openReportDB(cmd.Context(), flags)
+			db, err := openReportDB(flags)
 			if err != nil {
 				return err
 			}
@@ -153,7 +152,7 @@ func newReportChannelMixCmd(flags *rootFlags) *cobra.Command {
 			"mcp:read-only": "true",
 		},
 		RunE: func(cmd *cobra.Command, args []string) error {
-			db, err := openReportDB(cmd.Context(), flags)
+			db, err := openReportDB(flags)
 			if err != nil {
 				return err
 			}
@@ -222,7 +221,7 @@ func newReportShowImpactCmd(flags *rootFlags) *cobra.Command {
 			if strings.TrimSpace(tag) == "" {
 				return usageErr(fmt.Errorf("--tag is required"))
 			}
-			db, err := openReportDB(cmd.Context(), flags)
+			db, err := openReportDB(flags)
 			if err != nil {
 				return err
 			}
@@ -306,7 +305,7 @@ line-item titles.`,
 			if strings.TrimSpace(anchor) == "" || strings.TrimSpace(attached) == "" {
 				return usageErr(fmt.Errorf("--anchor and --attached are both required"))
 			}
-			db, err := openReportDB(cmd.Context(), flags)
+			db, err := openReportDB(flags)
 			if err != nil {
 				return err
 			}
@@ -365,7 +364,7 @@ func newReportCustomerLifecycleCmd(flags *rootFlags) *cobra.Command {
 			"mcp:read-only": "true",
 		},
 		RunE: func(cmd *cobra.Command, args []string) error {
-			db, err := openReportDB(cmd.Context(), flags)
+			db, err := openReportDB(flags)
 			if err != nil {
 				return err
 			}

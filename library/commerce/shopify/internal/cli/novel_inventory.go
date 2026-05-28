@@ -10,7 +10,7 @@ import (
 func newReportInventoryHealthCmd(flags *rootFlags) *cobra.Command {
 	var days, limit int
 	cmd := &cobra.Command{Use: "inventory-health", Short: "Inventory stock, sales velocity, and approximate days of supply by SKU.", Annotations: map[string]string{"mcp:read-only": "true"}, RunE: func(cmd *cobra.Command, args []string) error {
-		db, err := openReportDB(cmd.Context(), flags)
+		db, err := openReportDB(flags)
 		if err != nil {
 			return err
 		}
@@ -50,7 +50,7 @@ func newReportInventoryHealthCmd(flags *rootFlags) *cobra.Command {
 func newReportDeadInventoryCmd(flags *rootFlags) *cobra.Command {
 	var days, limit int
 	cmd := &cobra.Command{Use: "dead-inventory", Short: "Inventory items with available stock and no matching sales in the selected window.", Annotations: map[string]string{"mcp:read-only": "true"}, RunE: func(cmd *cobra.Command, args []string) error {
-		db, err := openReportDB(cmd.Context(), flags)
+		db, err := openReportDB(flags)
 		if err != nil {
 			return err
 		}

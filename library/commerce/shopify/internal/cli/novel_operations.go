@@ -10,13 +10,13 @@ import (
 func newReportFulfillmentSpeedCmd(flags *rootFlags) *cobra.Command {
 	var days int
 	cmd := &cobra.Command{Use: "fulfillment-speed", Short: "Fulfillment order speed from created_at to fulfill_at.", Annotations: map[string]string{"mcp:read-only": "true"}, RunE: func(cmd *cobra.Command, args []string) error {
-		db, err := openReportDB(cmd.Context(), flags)
+		db, err := openReportDB(flags)
 		if err != nil {
 			return err
 		}
 		defer db.Close()
 		days = normalizeDays(days)
-		q := fmt.Sprintf(`SELECT COALESCE(NULLIF(status,''),'(unknown)'), COUNT(*), ROUND(AVG((julianday(fulfill_at)-julianday(created_at))*24),2), ROUND(MIN((julianday(fulfill_at)-julianday(created_at))*24),2), ROUND(MAX((julianday(fulfill_at)-julianday(created_at))*24),2) FROM fulfillment_orders WHERE %s AND fulfill_at IS NOT NULL AND created_at IS NOT NULL GROUP BY 1 ORDER BY 2 DESC`, windowClause(days))
+		q := fmt.Sprintf(`SELECT COALESCE(NULLIF(status,''),'(unknown)'), COUNT(*), ROUND(AVG((julianday(fulfill_at)-julianday(created_at))*24),2), ROUND(MIN((julianday(fulfill_at)-julianday(created_at))*24),2), ROUND(MAX((julianday(fulfill_at)-julianday(created_at))*24),2) FROM fulfillment_orders WHERE %s AND fulfill_at IS NOT NULL AND fulfill_at != '' AND created_at IS NOT NULL GROUP BY 1 ORDER BY 2 DESC`, windowClause(days))
 		type row struct {
 			Status   string  `json:"status"`
 			Count    int     `json:"count"`
@@ -40,7 +40,7 @@ func newReportFulfillmentSpeedCmd(flags *rootFlags) *cobra.Command {
 func newReportAbandonedCheckoutAnalysisCmd(flags *rootFlags) *cobra.Command {
 	var days int
 	cmd := &cobra.Command{Use: "abandoned-checkout-analysis", Short: "Abandoned checkout totals, completion rate, and value over the selected window.", Annotations: map[string]string{"mcp:read-only": "true"}, RunE: func(cmd *cobra.Command, args []string) error {
-		db, err := openReportDB(cmd.Context(), flags)
+		db, err := openReportDB(flags)
 		if err != nil {
 			return err
 		}
@@ -65,7 +65,7 @@ func newReportAbandonedCheckoutAnalysisCmd(flags *rootFlags) *cobra.Command {
 func newReportCartValueDistributionCmd(flags *rootFlags) *cobra.Command {
 	var days int
 	cmd := &cobra.Command{Use: "cart-value-distribution", Short: "Order/cart value distribution buckets for synced orders.", Annotations: map[string]string{"mcp:read-only": "true"}, RunE: func(cmd *cobra.Command, args []string) error {
-		db, err := openReportDB(cmd.Context(), flags)
+		db, err := openReportDB(flags)
 		if err != nil {
 			return err
 		}

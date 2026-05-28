@@ -79,7 +79,14 @@ func queryRows[T any](db *sql.DB, q string, scan func(*sql.Rows) (T, error), arg
 }
 
 func containsTagExpr(alias string) string {
-	if strings.TrimSpace(alias) == "" {
+	switch strings.TrimSpace(alias) {
+	case "", "orders":
+		alias = "orders"
+	case "j.value":
+		alias = "j.value"
+	default:
+		// Only hardcoded SQL identifiers used by this package are accepted.
+		// User input must never choose a table/value alias.
 		alias = "orders"
 	}
 	return fmt.Sprintf(`EXISTS (SELECT 1 FROM json_each(json_extract(%s.data, '%s')) WHERE LOWER(value) LIKE LOWER(?))`, alias, jsonTags)

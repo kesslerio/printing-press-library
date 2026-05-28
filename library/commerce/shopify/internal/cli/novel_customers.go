@@ -10,7 +10,7 @@ import (
 func newReportCustomerCohortsCmd(flags *rootFlags) *cobra.Command {
 	var days int
 	cmd := &cobra.Command{Use: "customer-cohorts", Short: "Customer retention cohorts by absolute first purchase month.", Annotations: map[string]string{"mcp:read-only": "true"}, RunE: func(cmd *cobra.Command, args []string) error {
-		db, err := openReportDB(cmd.Context(), flags)
+		db, err := openReportDB(flags)
 		if err != nil {
 			return err
 		}
@@ -50,7 +50,7 @@ func newReportCustomerCohortsCmd(flags *rootFlags) *cobra.Command {
 func newReportCustomerRFMCmd(flags *rootFlags) *cobra.Command {
 	var days, limit int
 	cmd := &cobra.Command{Use: "customer-rfm", Short: "RFM customer segmentation; recency score is inverted so recent buyers score higher.", Annotations: map[string]string{"mcp:read-only": "true"}, RunE: func(cmd *cobra.Command, args []string) error {
-		db, err := openReportDB(cmd.Context(), flags)
+		db, err := openReportDB(flags)
 		if err != nil {
 			return err
 		}
@@ -89,7 +89,7 @@ func newReportCustomerRFMCmd(flags *rootFlags) *cobra.Command {
 func newReportCustomerLTVCmd(flags *rootFlags) *cobra.Command {
 	var days, limit int
 	cmd := &cobra.Command{Use: "customer-ltv", Short: "Top customers by lifetime value within the selected order window.", Annotations: map[string]string{"mcp:read-only": "true"}, RunE: func(cmd *cobra.Command, args []string) error {
-		db, err := openReportDB(cmd.Context(), flags)
+		db, err := openReportDB(flags)
 		if err != nil {
 			return err
 		}
@@ -125,7 +125,7 @@ func newReportCustomerLTVCmd(flags *rootFlags) *cobra.Command {
 func newReportRepeatRateCmd(flags *rootFlags) *cobra.Command {
 	var days int
 	cmd := &cobra.Command{Use: "repeat-rate", Short: "Repeat-purchase rate plus monthly trend.", Annotations: map[string]string{"mcp:read-only": "true"}, RunE: func(cmd *cobra.Command, args []string) error {
-		db, err := openReportDB(cmd.Context(), flags)
+		db, err := openReportDB(flags)
 		if err != nil {
 			return err
 		}
@@ -167,7 +167,7 @@ func newReportRepeatRateCmd(flags *rootFlags) *cobra.Command {
 func newReportCustomerChurnRiskCmd(flags *rootFlags) *cobra.Command {
 	var days, limit int
 	cmd := &cobra.Command{Use: "customer-churn-risk", Short: "Customers whose time since last order exceeds 1.5x their average order interval.", Annotations: map[string]string{"mcp:read-only": "true"}, RunE: func(cmd *cobra.Command, args []string) error {
-		db, err := openReportDB(cmd.Context(), flags)
+		db, err := openReportDB(flags)
 		if err != nil {
 			return err
 		}

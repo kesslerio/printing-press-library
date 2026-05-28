@@ -10,7 +10,7 @@ import (
 func newReportOrderTrendsCmd(flags *rootFlags) *cobra.Command {
 	var days int
 	cmd := &cobra.Command{Use: "order-trends", Short: "Daily order/revenue trend with 7-day rolling averages.", Annotations: map[string]string{"mcp:read-only": "true"}, RunE: func(cmd *cobra.Command, args []string) error {
-		db, err := openReportDB(cmd.Context(), flags)
+		db, err := openReportDB(flags)
 		if err != nil {
 			return err
 		}
@@ -44,7 +44,7 @@ func newReportOrderTrendsCmd(flags *rootFlags) *cobra.Command {
 func newReportAOVAnalysisCmd(flags *rootFlags) *cobra.Command {
 	var days int
 	cmd := &cobra.Command{Use: "aov-analysis", Short: "Average order value overall and by source_name.", Annotations: map[string]string{"mcp:read-only": "true"}, RunE: func(cmd *cobra.Command, args []string) error {
-		db, err := openReportDB(cmd.Context(), flags)
+		db, err := openReportDB(flags)
 		if err != nil {
 			return err
 		}
@@ -71,7 +71,9 @@ func newReportAOVAnalysisCmd(flags *rootFlags) *cobra.Command {
 		var orders int
 		var aov, revenue sql.NullFloat64
 		var currency sql.NullString
-		_ = db.DB().QueryRow(fmt.Sprintf(`SELECT COUNT(*), ROUND(AVG(CAST(json_extract(data,'%s') AS REAL)),2), ROUND(SUM(CAST(json_extract(data,'%s') AS REAL)),2), MAX(json_extract(data,'%s')) FROM orders WHERE %s`, jsonTotalAmount, jsonTotalAmount, jsonTotalCurrency, windowClause(days))).Scan(&orders, &aov, &revenue, &currency)
+		if err := db.DB().QueryRow(fmt.Sprintf(`SELECT COUNT(*), ROUND(AVG(CAST(json_extract(data,'%s') AS REAL)),2), ROUND(SUM(CAST(json_extract(data,'%s') AS REAL)),2), MAX(json_extract(data,'%s')) FROM orders WHERE %s`, jsonTotalAmount, jsonTotalAmount, jsonTotalCurrency, windowClause(days))).Scan(&orders, &aov, &revenue, &currency); err != nil {
+			return err
+		}
 		return printOutputWithFlags(cmd.OutOrStdout(), mustJSON(map[string]any{"days": days, "orders": orders, "aov": round2(aov.Float64), "revenue": round2(revenue.Float64), "currency": currency.String, "by_source": channels}), flags)
 	}}
 	addDaysFlag(cmd, &days, 90)
@@ -81,7 +83,7 @@ func newReportAOVAnalysisCmd(flags *rootFlags) *cobra.Command {
 func newReportDiscountImpactCmd(flags *rootFlags) *cobra.Command {
 	var days int
 	cmd := &cobra.Command{Use: "discount-impact", Short: "Compare orders with any discount application vs orders without discounts.", Long: "Shopify synced data includes discount application type/target/value, not codes; this reports any-discount impact, not per-code ROI.", Annotations: map[string]string{"mcp:read-only": "true"}, RunE: func(cmd *cobra.Command, args []string) error {
-		db, err := openReportDB(cmd.Context(), flags)
+		db, err := openReportDB(flags)
 		if err != nil {
 			return err
 		}
@@ -107,7 +109,7 @@ func newReportDiscountImpactCmd(flags *rootFlags) *cobra.Command {
 func newReportRefundAnalysisCmd(flags *rootFlags) *cobra.Command {
 	var days, limit int
 	cmd := &cobra.Command{Use: "refund-analysis", Short: "Refunded order/product analysis from financial status and refund totals.", Annotations: map[string]string{"mcp:read-only": "true"}, RunE: func(cmd *cobra.Command, args []string) error {
-		db, err := openReportDB(cmd.Context(), flags)
+		db, err := openReportDB(flags)
 		if err != nil {
 			return err
 		}
@@ -134,7 +136,7 @@ func newReportRefundAnalysisCmd(flags *rootFlags) *cobra.Command {
 func newReportPeakHoursCmd(flags *rootFlags) *cobra.Command {
 	var days int
 	cmd := &cobra.Command{Use: "peak-hours", Short: "UTC order volume and revenue by hour/day-of-week.", Annotations: map[string]string{"mcp:read-only": "true"}, RunE: func(cmd *cobra.Command, args []string) error {
-		db, err := openReportDB(cmd.Context(), flags)
+		db, err := openReportDB(flags)
 		if err != nil {
 			return err
 		}
@@ -163,7 +165,7 @@ func newReportPeakHoursCmd(flags *rootFlags) *cobra.Command {
 func newReportFirstPurchaseAnalysisCmd(flags *rootFlags) *cobra.Command {
 	var days, limit int
 	cmd := &cobra.Command{Use: "first-purchase-analysis", Short: "First-purchase cohort products and customer LTV for absolute first orders.", Annotations: map[string]string{"mcp:read-only": "true"}, RunE: func(cmd *cobra.Command, args []string) error {
-		db, err := openReportDB(cmd.Context(), flags)
+		db, err := openReportDB(flags)
 		if err != nil {
 			return err
 		}
@@ -190,7 +192,7 @@ func newReportFirstPurchaseAnalysisCmd(flags *rootFlags) *cobra.Command {
 func newReportKlaviyoAttributionCmd(flags *rootFlags) *cobra.Command {
 	var days int
 	cmd := &cobra.Command{Use: "klaviyo-attribution", Short: "Revenue attributed to email/Klaviyo source names or tags.", Annotations: map[string]string{"mcp:read-only": "true"}, RunE: func(cmd *cobra.Command, args []string) error {
-		db, err := openReportDB(cmd.Context(), flags)
+		db, err := openReportDB(flags)
 		if err != nil {
 			return err
 		}

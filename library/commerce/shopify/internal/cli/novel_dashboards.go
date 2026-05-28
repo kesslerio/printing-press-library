@@ -11,7 +11,7 @@ import (
 func newReportDashboardCmd(flags *rootFlags) *cobra.Command {
 	var days int
 	cmd := &cobra.Command{Use: "dashboard", Short: "Executive Shopify dashboard: revenue, orders, AOV, top products, and customers.", Annotations: map[string]string{"mcp:read-only": "true"}, RunE: func(cmd *cobra.Command, args []string) error {
-		db, err := openReportDB(cmd.Context(), flags)
+		db, err := openReportDB(flags)
 		if err != nil {
 			return err
 		}
@@ -43,7 +43,7 @@ func newReportDashboardCmd(flags *rootFlags) *cobra.Command {
 func newReportWeeklyDigestCmd(flags *rootFlags) *cobra.Command {
 	var days int
 	cmd := &cobra.Command{Use: "weekly-digest", Short: "This window vs previous window comparison for revenue, orders, and AOV.", Annotations: map[string]string{"mcp:read-only": "true"}, RunE: func(cmd *cobra.Command, args []string) error {
-		db, err := openReportDB(cmd.Context(), flags)
+		db, err := openReportDB(flags)
 		if err != nil {
 			return err
 		}
@@ -82,7 +82,7 @@ func newReportWeeklyDigestCmd(flags *rootFlags) *cobra.Command {
 func newReportHealthScoreCmd(flags *rootFlags) *cobra.Command {
 	var days int
 	cmd := &cobra.Command{Use: "health-score", Short: "Composite 0-100 ecommerce health score from revenue trend, repeat rate, refunds, and fulfillment.", Annotations: map[string]string{"mcp:read-only": "true"}, RunE: func(cmd *cobra.Command, args []string) error {
-		db, err := openReportDB(cmd.Context(), flags)
+		db, err := openReportDB(flags)
 		if err != nil {
 			return err
 		}
