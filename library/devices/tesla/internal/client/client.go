@@ -595,7 +595,7 @@ func (c *Client) doInternal(method, path string, params map[string]string, body 
 		// teslaShouldUseFleetForReads heuristic leaves open (see its doc comment).
 		if resp.StatusCode == http.StatusNotFound && c.FleetFallback && !c.FleetMode &&
 			method == http.MethodGet && isVehicleReadPath(path) {
-			c.activateFleetFallback()
+			c.ActivateFleetFallback()
 			return c.doInternal(method, path, params, body, headerOverrides, readOnlyIntent)
 		}
 
@@ -619,10 +619,13 @@ func isVehicleReadPath(path string) bool {
 	return vehicleReadPathRe.MatchString(path)
 }
 
-// activateFleetFallback switches this client from the owner-api read path to
+// ActivateFleetFallback switches this client from the owner-api read path to
 // the regional Fleet API in place, so a retry reuses the existing FleetMode
 // path rewriting, response unwrapping, and Fleet 401-refresh. Idempotent.
-func (c *Client) activateFleetFallback() {
+// Exported so diagnostics (reachability) that manage their own owner-then-Fleet
+// probe sequence can switch the client deliberately rather than via the
+// transparent 404 fallback.
+func (c *Client) ActivateFleetFallback() {
 	c.FleetMode = true
 	if c.FleetBaseURL != "" {
 		c.BaseURL = strings.TrimRight(c.FleetBaseURL, "/")
