@@ -166,7 +166,7 @@
     {
       "id": "fix-products-parser-wall-connector-string-id",
       "summary": "Handle Wall Connector accounts in /api/1/products: change productEntry.VehicleCommandID to json.RawMessage so the unmarshal succeeds, and filter empty-VIN entries in fetchProductsList so energy devices can't accidentally match an empty --vehicle in the exact-match loop.",
-      "reason": "Tesla's /api/1/products returns a heterogeneous array: vehicles have integer IDs, energy devices (Wall Connectors, Powerwalls) have non-numeric string IDs (e.g. \"STE20240625-00048\") and no VIN. int64 fails the parse for any account with a Wall Connector. json.Number is also insufficient — it rejects non-numeric strings via isValidNumber, so the runtime parse still fails even though the code compiles. json.RawMessage implements json.Unmarshaler and accepts any JSON token, which is the only stdlib type that works for both shapes without a custom unmarshaler. Once the parse succeeds, energy-device entries with empty VINs would still slip into resolveCommandVehicle, where strings.EqualFold(\"\", \"\") would match a Wall Connector against an empty --vehicle and silently route a vehicle command at a charger; dropping empty-VIN entries at the data-source boundary closes that hole without scattering nil checks across the matching loops.",
+      "reason": "Tesla's /api/1/products returns a heterogeneous array: vehicles have integer IDs, energy devices (Wall Connectors, Powerwalls) have non-numeric string IDs (e.g. \"STE20240625-00048\") and no VIN. int64 fails the parse for any account with a Wall Connector. json.Number is also insufficient \u2014 it rejects non-numeric strings via isValidNumber, so the runtime parse still fails even though the code compiles. json.RawMessage implements json.Unmarshaler and accepts any JSON token, which is the only stdlib type that works for both shapes without a custom unmarshaler. Once the parse succeeds, energy-device entries with empty VINs would still slip into resolveCommandVehicle, where strings.EqualFold(\"\", \"\") would match a Wall Connector against an empty --vehicle and silently route a vehicle command at a charger; dropping empty-VIN entries at the data-source boundary closes that hole without scattering nil checks across the matching loops.",
       "files": [
         "internal/cli/tesla_command.go"
       ],
@@ -206,6 +206,20 @@
         "internal/config/config_fleet_test.go"
       ],
       "validated_outcome": "Unit tests (fleetAPIBase, teslaShouldUseFleetForReads, SaveFleetAPIBase, rewriteFleetSubsetPath, unwrapFleetSubset, AuthHeader fleet-bearer, no-persist regression, newClient routing) plus full module build/vet/test/govulncheck pass. Read-routing uses a non-persisted UseFleetBearer flag + a client-level base URL so a token refresh never writes a transient auth_header/base_url to disk. Validated live against an EU vehicle: products, full vehicle_data, ready --force-refresh, and get-data-* subset commands return real data with zero env vars; the fleet 401->refresh path was exercised with an invalid token and re-minted cleanly without polluting the config. Hardened after an independent Codex adversarial review: Fleet base-host allowlist (https + tesla.com, loopback for tests/relay) blocks bearer exfiltration via TESLA_FLEET_API_URL/api_base; TESLA_FLEET_TOKEN is honored for read routing; cacheKey resolves AuthHeader before reading AuthSource; the refresh callback validates client_id. Fleet drive_state GPS is gated on the vehicle_location scope (decoded from the Fleet JWT): with the scope, drive_state also requests the location_data endpoint and merges GPS into the response; without it, drive_state is fetched alone so the call never 403s.",
+      "upstream_issue": "https://github.com/mvanhorn/cli-printing-press/issues/2181"
+    },
+    {
+      "id": "tesla-fleet-read-404-fallback",
+      "summary": "Reactive owner-api-404 -> Fleet fallback for vehicle reads. On an owner-api GET to /vehicle_data or /data_request/<name> that 404s while a Fleet token is configured, the client switches to the regional Fleet base + Fleet bearer + Fleet 401-refresh in place and retries once, reusing the existing FleetMode path-rewrite and response-unwrap (Client.FleetFallback/FleetBaseURL/FleetRefresh, activateFleetFallback, isVehicleReadPath). newClient arms it whenever Fleet is configured but the owner read path was chosen. Also factors shared teslaFleetConfigured / teslaFleetHasLocationScope helpers.",
+      "reason": "The per-install teslaShouldUseFleetForReads heuristic (added with tesla-regional-fleet-reads) routes reads to Fleet only when no usable owner-api token exists. A mixed account with a pre-2021 car (keeps a valid owner token alive) plus a 2021+/non-NA car routed every read through owner-api, so the Fleet-only car returned owner-api 404 unless TESLA_PP_FORCE_FLEET_READS=1 was set by hand. The reactive fallback recovers that car with zero env vars while keeping the fast owner path for single-profile installs.",
+      "files": [
+        "internal/client/client.go",
+        "internal/client/client_fleet_fallback_test.go",
+        "internal/cli/root.go",
+        "internal/cli/tesla_auth_autorefresh.go",
+        "internal/cli/tesla_fleet_auth.go"
+      ],
+      "validated_outcome": "New client tests: 404 fallback switches base+bearer and unwraps to owner shape; an unarmed 404 still errors; a non-vehicle 404 (/api/1/products) does not retry; isVehicleReadPath table. go build/vet/test all green (500 tests pass). Verified live against a NA 2023 Model 3 on a mixed account (a 2018 Model X also present on owner-api): with a valid owner token and NO env vars, get-vehicle-data and the get-data-* subset commands return real data where the unpatched tesla-regional-fleet-reads build 404'd.",
       "upstream_issue": "https://github.com/mvanhorn/cli-printing-press/issues/2181"
     }
   ]
