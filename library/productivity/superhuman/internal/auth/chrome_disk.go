@@ -89,6 +89,9 @@ var ChromeDataDirOverride string
 // ChromeDataDir returns the OS-specific path to the Chrome user-data-dir
 // (the directory containing profile subdirectories like "Default", "Profile 1").
 func ChromeDataDir() (string, error) {
+	if dir := os.Getenv("CHROME_USER_DATA_DIR"); dir != "" {
+		return dir, nil
+	}
 	if ChromeDataDirOverride != "" {
 		return ChromeDataDirOverride, nil
 	}

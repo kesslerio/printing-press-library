@@ -137,9 +137,22 @@ func RefreshWithClient(ctx context.Context, email string, store *Store, httpClie
 		return "", fmt.Errorf("firebase refresh: account %q not found in store", email)
 	}
 	if account.RefreshToken == "" {
-		// This is the legacy bare-JWT case from U3's `auth set-token` path.
-		// There's no refresh token to exchange, so the only path forward is
-		// for the user to attach Chrome and capture a fresh pair.
+		// Try to fall back to refreshing from Chrome cookies on disk.
+		// If the user has logged in in Chrome, this lets us auto-refresh indefinitely
+		// without needing a Firebase refresh token in the store.
+		res, err := RefreshFromChromeCookies(ctx, email, account.UserID)
+		if err == nil && res != nil {
+			nowMs := time.Now().UnixMilli()
+			account.SuperhumanToken.Token = res.IDToken
+			account.SuperhumanToken.Expires = res.IDTokenExpires
+			account.AccessToken = res.AccessToken
+			account.LastUsedAt = nowMs
+			if _, err := store.Upsert(email, account); err != nil {
+				return "", fmt.Errorf("firebase refresh cookie fallback: persist: %w", err)
+			}
+			return res.IDToken, nil
+		}
+		// Fall back to original ErrRefreshTokenExpired
 		return "", ErrRefreshTokenExpired
 	}
 

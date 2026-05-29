@@ -122,29 +122,30 @@ const extractIIFE = `(async () => {
       throw new Error('extract: page not ready (GoogleAccount missing)');
     }
 
-    // activeAccountEmail is the canonical handle for the currently
-    // selected mailbox. When the caller hasn't pinned an email, we use
-    // it. When the caller pins an email, prefer that — but fall back to
-    // active if the pinned email isn't present (so the error message
-    // points at "page not ready" instead of a silent mismatch).
-    const activeEmail = umbrella.activeAccountEmail || '';
-    let email = __requestedEmail || activeEmail;
-    if (!email) {
-      throw new Error('extract: page not ready (no active account)');
-    }
-
-    // Account lookup: Superhuman keeps sub-accounts directly on the
-    // umbrella object keyed by email, and also under .accounts in some
-    // bundle versions. Probe both, prefer the keyed form.
-    let account = umbrella[email];
-    if (!account && umbrella.accounts) {
-      account = umbrella.accounts[email];
-    }
-    if (!account) {
-      // Try the active account if a specific email wasn't found.
-      if (activeEmail && activeEmail !== email) {
-        email = activeEmail;
-        account = umbrella[email] || (umbrella.accounts && umbrella.accounts[email]);
+    // Determine if umbrella is directly the account object
+    let account = null;
+    let email = '';
+    if (umbrella.credential) {
+      // Direct account object
+      account = umbrella;
+      email = umbrella.emailAddress || umbrella.email || '';
+    } else {
+      // Umbrella object
+      const activeEmail = umbrella.activeAccountEmail || '';
+      email = __requestedEmail || activeEmail;
+      if (!email) {
+        throw new Error('extract: page not ready (no active account)');
+      }
+      account = umbrella[email];
+      if (!account && umbrella.accounts) {
+        account = umbrella.accounts[email];
+      }
+      if (!account) {
+        // Try the active account if a specific email wasn't found.
+        if (activeEmail && activeEmail !== email) {
+          email = activeEmail;
+          account = umbrella[email] || (umbrella.accounts && umbrella.accounts[email]);
+        }
       }
     }
     if (!account) {
@@ -176,14 +177,23 @@ const extractIIFE = `(async () => {
     // ---- 4. Resolve userId / userExternalId ----
     // The "user_..." external ID lives in a few places across Superhuman
     // bundle versions. AnonymousProfiler is the most-stable surface; we
+    // The "user_..." external ID lives in a few places across Superhuman
+    // bundle versions. AnonymousProfiler is the most-stable surface; we
     // probe it first, then fall back to the activeAccount user.id, then
     // to anything credential exposes.
     let userExternalId = '';
     try {
-      if (window.AnonymousProfiler && window.AnonymousProfiler._user && window.AnonymousProfiler._user._id) {
-        userExternalId = window.AnonymousProfiler._user._id;
+      if (authData.externalId) {
+        userExternalId = authData.externalId;
       }
-    } catch (e) { /* swallow — fallback below */ }
+    } catch (e) { /* swallow */ }
+    if (!userExternalId) {
+      try {
+        if (window.AnonymousProfiler && window.AnonymousProfiler._user && window.AnonymousProfiler._user._id) {
+          userExternalId = window.AnonymousProfiler._user._id;
+        }
+      } catch (e) { /* swallow — fallback below */ }
+    }
     if (!userExternalId) {
       try {
         if (umbrella.activeAccount && umbrella.activeAccount.user && umbrella.activeAccount.user.id) {
@@ -193,6 +203,9 @@ const extractIIFE = `(async () => {
     }
     if (!userExternalId && account.user && account.user.id) {
       userExternalId = account.user.id;
+    }
+    if (!userExternalId && authData.userId) {
+      userExternalId = authData.userId;
     }
 
     // userId is the full string we persist as-is. The plan calls this
