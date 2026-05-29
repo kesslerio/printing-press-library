@@ -4,6 +4,7 @@ package auth
 
 import (
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -140,7 +141,11 @@ func RefreshWithClient(ctx context.Context, email string, store *Store, httpClie
 		// Try to fall back to refreshing from Chrome cookies on disk.
 		// If the user has logged in in Chrome, this lets us auto-refresh indefinitely
 		// without needing a Firebase refresh token in the store.
-		res, err := RefreshFromChromeCookies(ctx, email, account.UserID)
+		googleID := account.UserID
+		if jwtSub := extractGoogleIDFromJWT(account.SuperhumanToken.Token); jwtSub != "" {
+			googleID = jwtSub
+		}
+		res, err := RefreshFromChromeCookies(ctx, email, googleID)
 		if err == nil && res != nil {
 			nowMs := time.Now().UnixMilli()
 			account.SuperhumanToken.Token = res.IDToken
@@ -368,4 +373,31 @@ func truncate(s string, max int) string {
 		return s
 	}
 	return s[:max] + "..."
+}
+
+// extractGoogleIDFromJWT splits a Firebase ID token (JWT) and decodes its payload
+// to read the "sub" claim (the Google User ID). Returns empty string on failure.
+func extractGoogleIDFromJWT(token string) string {
+	parts := strings.Split(token, ".")
+	if len(parts) < 2 {
+		return ""
+	}
+	payloadSegment := parts[1]
+	if l := len(payloadSegment) % 4; l > 0 {
+		payloadSegment += strings.Repeat("=", 4-l)
+	}
+	decoded, err := base64.URLEncoding.DecodeString(payloadSegment)
+	if err != nil {
+		decoded, err = base64.StdEncoding.DecodeString(payloadSegment)
+		if err != nil {
+			return ""
+		}
+	}
+	var claims struct {
+		Sub string `json:"sub"`
+	}
+	if err := json.Unmarshal(decoded, &claims); err != nil {
+		return ""
+	}
+	return claims.Sub
 }
