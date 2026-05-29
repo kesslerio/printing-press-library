@@ -520,9 +520,19 @@ func collectRefreshReport(ctx context.Context, cfg *config.Config) string {
 
 	if acct.RefreshToken == "" {
 		if delta > 0 {
-			return fmt.Sprintf("skipped (no refresh token; legacy set-token, expires in %s)", humanizeDuration(delta))
+			return fmt.Sprintf("ok (using Chrome cookie refresh fallback; expires in %s)", humanizeDuration(delta))
 		}
-		return "FAILED (no refresh token; legacy set-token expired — re-run auth login --chrome)"
+		// If expired, try to refresh via Chrome cookies fallback
+		var refreshErr error
+		if cfg.RefreshFunc != nil {
+			_, refreshErr = cfg.RefreshFunc(ctx, email, store)
+		} else {
+			_, refreshErr = auth.Refresh(ctx, email, store)
+		}
+		if refreshErr == nil {
+			return "ok (successfully refreshed via Chrome cookie fallback)"
+		}
+		return "FAILED (no refresh token and Chrome cookie fallback failed — re-run auth login --chrome)"
 	}
 
 	if delta > doctorRefreshSkipThreshold {
