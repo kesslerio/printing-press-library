@@ -1,7 +1,7 @@
 // Copyright 2026 Matt Van Horn and contributors. Licensed under Apache-2.0. See LICENSE.
 
 // chrome_cookies.go reads Chrome's encrypted cookies database, decrypts values
-// with the macOS Keychain "Chrome Safe Storage" key, and exposes a
+// with the platform Chrome cookie key, and exposes a
 // session-refresh pipeline that exchanges those cookies for a fresh Superhuman
 // JWT via accounts.superhuman.com.
 //
@@ -34,6 +34,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/godbus/dbus/v5"
 	"github.com/google/uuid"
 	"golang.org/x/crypto/pbkdf2"
 	_ "modernc.org/sqlite"
@@ -61,26 +62,57 @@ type CookieAuthResult struct {
 }
 
 // ChromeCookiesPath returns the OS-specific path to Chrome's Cookies database.
-// Currently macOS-only; Linux/Windows TBD.
 func ChromeCookiesPath() (string, error) {
 	dataDir, err := ChromeDataDir()
 	if err != nil {
 		return "", err
 	}
-	if runtime.GOOS != "darwin" {
-		return "", fmt.Errorf("chrome cookies: %s not yet supported (macOS only for now)", runtime.GOOS)
-	}
 	return filepath.Join(dataDir, "Default", "Cookies"), nil
 }
 
-// chromeSafeStorageKey returns the AES-128 key Chrome uses to encrypt cookies
-// on macOS. The password lives in the macOS Keychain under the service name
-// "Chrome Safe Storage"; the key is derived via PBKDF2-HMAC-SHA1 with the
-// fixed salt "saltysalt" and 1003 iterations.
-func chromeSafeStorageKey() ([]byte, error) {
-	if runtime.GOOS != "darwin" {
+type chromeCookieKey struct {
+	label string
+	key   []byte
+}
+
+// chromeCookieKeys returns candidate AES-128 keys Chrome uses to encrypt
+// v10/v11 cookie values. macOS stores the password in Keychain. Linux commonly
+// uses the historical "peanuts" password when the profile is not backed by a
+// desktop secret service; CHROME_COOKIE_PASSWORD is an escape hatch for
+// keyring-backed profiles.
+func chromeCookieKeys() ([]chromeCookieKey, error) {
+	if pw := os.Getenv("CHROME_COOKIE_PASSWORD"); pw != "" {
+		return []chromeCookieKey{{
+			label: "env:CHROME_COOKIE_PASSWORD",
+			key:   pbkdf2.Key([]byte(pw), []byte("saltysalt"), 1, 16, sha1.New),
+		}}, nil
+	}
+
+	switch runtime.GOOS {
+	case "darwin":
+		key, err := chromeMacSafeStorageKey()
+		if err != nil {
+			return nil, err
+		}
+		return []chromeCookieKey{{label: "macos-keychain", key: key}}, nil
+	case "linux":
+		keys := []chromeCookieKey{{
+			label: "linux-basic-store",
+			key:   pbkdf2.Key([]byte("peanuts"), []byte("saltysalt"), 1, 16, sha1.New),
+		}}
+		if pw, err := linuxChromeSafeStoragePassword(); err == nil && pw != "" {
+			keys = append([]chromeCookieKey{{
+				label: "linux-secret-service",
+				key:   pbkdf2.Key([]byte(pw), []byte("saltysalt"), 1, 16, sha1.New),
+			}}, keys...)
+		}
+		return keys, nil
+	default:
 		return nil, fmt.Errorf("chrome safe storage: %s not yet supported", runtime.GOOS)
 	}
+}
+
+func chromeMacSafeStorageKey() ([]byte, error) {
 	out, err := exec.Command("security", "find-generic-password", "-s", "Chrome Safe Storage", "-w").Output()
 	if err != nil {
 		return nil, fmt.Errorf("keychain read: %w (you may have denied the prompt; try again and click Always Allow)", err)
@@ -90,6 +122,80 @@ func chromeSafeStorageKey() ([]byte, error) {
 		return nil, fmt.Errorf("keychain returned empty password for Chrome Safe Storage")
 	}
 	return pbkdf2.Key([]byte(pw), []byte("saltysalt"), 1003, 16, sha1.New), nil
+}
+
+type secretValue struct {
+	Session     dbus.ObjectPath
+	Parameters  []byte
+	Value       []byte
+	ContentType string
+}
+
+func linuxChromeSafeStoragePassword() (string, error) {
+	conn, err := dbus.SessionBus()
+	if err != nil {
+		return "", fmt.Errorf("secret service session bus: %w", err)
+	}
+	defer conn.Close()
+
+	service := conn.Object("org.freedesktop.secrets", dbus.ObjectPath("/org/freedesktop/secrets"))
+	var output dbus.Variant
+	var session dbus.ObjectPath
+	if err := service.Call(
+		"org.freedesktop.Secret.Service.OpenSession",
+		0,
+		"plain",
+		dbus.MakeVariant(""),
+	).Store(&output, &session); err != nil {
+		return "", fmt.Errorf("secret service open session: %w", err)
+	}
+
+	for _, attrs := range []map[string]string{
+		{"xdg:schema": "chrome_libsecret_os_crypt_password_v2", "application": "chrome"},
+		{"xdg:schema": "chrome_libsecret_os_crypt_password_v2", "application": "chromium"},
+		{"xdg:schema": "chrome_libsecret_os_crypt_password_v2", "application": "Chrome"},
+	} {
+		var unlocked []dbus.ObjectPath
+		var locked []dbus.ObjectPath
+		if err := service.Call(
+			"org.freedesktop.Secret.Service.SearchItems",
+			0,
+			attrs,
+		).Store(&unlocked, &locked); err != nil {
+			continue
+		}
+		if len(unlocked) == 0 && len(locked) > 0 {
+			var newlyUnlocked []dbus.ObjectPath
+			var prompt dbus.ObjectPath
+			if err := service.Call(
+				"org.freedesktop.Secret.Service.Unlock",
+				0,
+				locked,
+			).Store(&newlyUnlocked, &prompt); err == nil {
+				unlocked = append(unlocked, newlyUnlocked...)
+			}
+		}
+		if len(unlocked) == 0 {
+			continue
+		}
+
+		var secrets map[dbus.ObjectPath]secretValue
+		if err := service.Call(
+			"org.freedesktop.Secret.Service.GetSecrets",
+			0,
+			unlocked,
+			session,
+		).Store(&secrets); err != nil {
+			continue
+		}
+		for _, secret := range secrets {
+			if len(secret.Value) > 0 {
+				return string(secret.Value), nil
+			}
+		}
+	}
+
+	return "", fmt.Errorf("Chrome Safe Storage password not found in Secret Service")
 }
 
 // chromeIV is Chrome's hardcoded 16-byte AES-CBC IV (16 space characters).
@@ -137,7 +243,7 @@ func DecryptedChromeCookies(host string) (map[string]string, error) {
 		return nil, fmt.Errorf("snapshot copy: %w", err)
 	}
 
-	key, err := chromeSafeStorageKey()
+	keys, err := chromeCookieKeys()
 	if err != nil {
 		return nil, err
 	}
@@ -168,30 +274,48 @@ func DecryptedChromeCookies(host string) (map[string]string, error) {
 			out[name] = string(enc)
 			continue
 		}
-		pt, err := decryptV10Cookie(enc[3:], key)
-		if err != nil {
-			continue
-		}
-		// PATCH(host-key-binding-detection): only strip the 32-byte
-		// SHA-256(host_key) prefix when it actually matches the
-		// computed hash. The previous unconditional strip discarded
-		// the first 32 chars of every cookie value (which is every
-		// JWT-sized session token), so RefreshFromChromeCookies always
-		// sent a corrupted token. The prefix is added by Chrome's
-		// M120+ cookie host-binding feature and is absent on older
-		// Chrome versions (greptile P1).
-		if len(pt) >= 32 {
-			sum := sha256.Sum256([]byte(host))
-			if bytes.Equal(pt[:32], sum[:]) {
-				pt = pt[32:]
+		for _, candidate := range keys {
+			pt, err := decryptV10Cookie(enc[3:], candidate.key)
+			if err != nil {
+				continue
 			}
+			// PATCH(host-key-binding-detection): only strip the 32-byte
+			// SHA-256(host_key) prefix when it actually matches the
+			// computed hash. The prefix is added by Chrome's M120+
+			// cookie host-binding feature and is absent on older Chrome
+			// versions.
+			if len(pt) >= 32 {
+				sum := sha256.Sum256([]byte(host))
+				if bytes.Equal(pt[:32], sum[:]) {
+					pt = pt[32:]
+				}
+			}
+			if !looksLikeCookieValue(pt) {
+				continue
+			}
+			out[name] = string(pt)
+			break
 		}
-		out[name] = string(pt)
 	}
 	if len(out) == 0 {
 		return nil, fmt.Errorf("no cookies found for host %q (have you logged in to Superhuman in Chrome?)", host)
 	}
 	return out, nil
+}
+
+func looksLikeCookieValue(v []byte) bool {
+	if len(v) == 0 {
+		return false
+	}
+	for _, b := range v {
+		if b == '\t' || b == '\n' || b == '\r' {
+			continue
+		}
+		if b < 0x20 || b == 0x7f {
+			return false
+		}
+	}
+	return true
 }
 
 // RefreshFromChromeCookies is the headline operation: read accounts.superhuman.com
